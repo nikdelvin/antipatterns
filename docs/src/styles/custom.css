@@ -1,11 +1,10 @@
 /* Custom styles for Antipatterns Guide */
 
 /* Dark mode colors. */
-/* Dark mode colors. */
 :root {
-	--sl-color-accent-low: #131e4f;
-	--sl-color-accent: #3447ff;
-	--sl-color-accent-high: #b3c7ff;
+	--sl-color-accent-low: #222429;
+	--sl-color-accent: #62697d;
+	--sl-color-accent-high: #c5c8d0;
 	--sl-color-white: #ffffff;
 	--sl-color-gray-1: #eceef2;
 	--sl-color-gray-2: #c0c2c7;
@@ -17,9 +16,9 @@
 }
 /* Light mode colors. */
 :root[data-theme='light'] {
-	--sl-color-accent-low: #c7d6ff;
-	--sl-color-accent: #364bff;
-	--sl-color-accent-high: #182775;
+	--sl-color-accent-low: #d4d7dc;
+	--sl-color-accent: #646b7f;
+	--sl-color-accent-high: #2f323b;
 	--sl-color-white: #17181c;
 	--sl-color-gray-1: #24272f;
 	--sl-color-gray-2: #353841;
@@ -135,4 +134,8 @@
 
 .comparison-table .right {
   background: rgba(76, 175, 80, 0.1);
+}
+
+.site-title {
+  gap: 0.75rem !important;
 }

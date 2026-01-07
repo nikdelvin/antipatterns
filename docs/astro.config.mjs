@@ -6,11 +6,15 @@ import starlight from '@astrojs/starlight';
 export default defineConfig({
 	integrations: [
 		starlight({
-			title: 'Antipatterns Guide',
+			title: 'Antipatterns',
 			description: 'Learn to recognize and avoid common programming antipatterns',
 			social: [
-				{ icon: 'github', label: 'GitHub', href: 'https://github.com' },
+				{ icon: 'github', label: 'GitHub', href: 'https://github.com/nikdelvin/antipatterns' },
 			],
+			favicon: '/favicon.ico',
+			logo: {
+				src: './src/assets/logo.png',
+			},
 			customCss: ['./src/styles/custom.css'],
 			sidebar: [
 				{
