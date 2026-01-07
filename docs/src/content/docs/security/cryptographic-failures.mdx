@@ -1,0 +1,296 @@
+---
+title: Cryptographic Failures
+description: "OWASP A02: Weak encryption, plaintext passwords, and exposed secrets"
+---
+
+## What are Cryptographic Failures?
+
+**Cryptographic Failures** occur when sensitive data is not properly protected:
+- Passwords stored in plaintext or with weak hashing
+- Secrets hardcoded in source code
+- Weak or deprecated encryption algorithms
+- Missing encryption for sensitive data
+
+<div class="wrong-way">
+
+## Real Examples from the Project
+
+</div>
+
+### 1. MD5 for Password Hashing
+
+<div class="file-path">src/security/security.js</div>
+
+```javascript title="src/security/security.js"
+import crypto from 'crypto'
+
+// ANTIPATTERN: MD5 is cryptographically broken!
+export function hashPassword(password) {
+  return crypto.createHash('md5').update(password).digest('hex')
+}
+
+// MD5 can be cracked in seconds with rainbow tables
+// Example: "password123" -> "482c811da5d5b4bc6d497ffa98491e38"
+```
+
+### 2. No Salt
+
+```javascript title="src/security/security.js"
+// ANTIPATTERN: Same password = same hash
+export function hashPasswordNoSalt(password) {
+  return crypto.createHash('sha256').update(password).digest('hex')
+}
+
+// All users with password "123456" have the same hash
+// Attacker cracks one, cracks all!
+```
+
+### 3. Predictable Salt
+
+```javascript title="src/security/security.js"
+// ANTIPATTERN: Hardcoded salt defeats the purpose!
+const GLOBAL_SALT = 'my-secret-salt-123'
+
+export function hashPasswordBadSalt(password) {
+  return crypto.createHash('sha256')
+    .update(GLOBAL_SALT + password)
+    .digest('hex')
+}
+```
+
+### 4. Secrets in Source Code
+
+```javascript title="src/security/security.js"
+// ANTIPATTERN: Secrets committed to git!
+export const SECRETS = {
+  JWT_SECRET: 'super-secret-jwt-key',
+  API_KEY: 'sk_live_1234567890abcdef',
+  DATABASE_PASSWORD: 'password123',
+  AWS_ACCESS_KEY: 'AKIAIOSFODNN7EXAMPLE',
+  AWS_SECRET_KEY: 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
+  STRIPE_KEY: 'sk_live_stripe_key_here',
+  PRIVATE_KEY: `-----BEGIN RSA PRIVATE KEY-----
+MIIEpAIBAAKCAQEA...
+-----END RSA PRIVATE KEY-----`,
+}
+```
+
+### 5. Weak Encryption
+
+```javascript title="src/security/security.js"
+// ANTIPATTERN: Hardcoded key and IV!
+const ENCRYPTION_KEY = 'my-secret-key-16' // 16 bytes
+const IV = '1234567890123456' // Static IV is dangerous!
+
+export function encrypt(text) {
+  const cipher = crypto.createCipheriv('aes-128-cbc', ENCRYPTION_KEY, IV)
+  let encrypted = cipher.update(text, 'utf8', 'hex')
+  encrypted += cipher.final('hex')
+  return encrypted
+}
+```
+
+---
+
+## Why It's Dangerous
+
+### Password Cracking
+```javascript
+// MD5 rainbow table attack
+const hash = '482c811da5d5b4bc6d497ffa98491e38'
+// Lookup in rainbow table: "password123"
+// Time: milliseconds
+```
+
+### Secret Exposure
+```bash
+# Secrets in git history are forever
+git log -p --all -S 'AWS_SECRET_KEY'
+# Found in commit from 3 years ago!
+```
+
+### Encryption Key Reuse
+```javascript
+// Same key + same IV = identical ciphertext
+encrypt('secret1') // -> 'a1b2c3...'
+encrypt('secret1') // -> 'a1b2c3...' (SAME!)
+// Attacker can detect patterns
+```
+
+---
+
+<div class="right-way">
+
+## The Right Way
+
+</div>
+
+### 1. Use bcrypt or Argon2 for Passwords
+
+```javascript title="src/services/auth.service.js"
+import bcrypt from 'bcrypt'
+
+const SALT_ROUNDS = 12 // Adjustable work factor
+
+export async function hashPassword(password) {
+  // Automatically generates unique salt
+  return bcrypt.hash(password, SALT_ROUNDS)
+}
+
+export async function verifyPassword(password, hash) {
+  return bcrypt.compare(password, hash)
+}
+```
+
+```javascript title="Alternative: Argon2"
+import argon2 from 'argon2'
+
+export async function hashPassword(password) {
+  return argon2.hash(password, {
+    type: argon2.argon2id,
+    memoryCost: 65536, // 64 MB
+    timeCost: 3,
+    parallelism: 4,
+  })
+}
+
+export async function verifyPassword(password, hash) {
+  return argon2.verify(hash, password)
+}
+```
+
+### 2. Environment Variables for Secrets
+
+```javascript title="src/config.js"
+// Load from environment, never from code
+export const config = {
+  jwtSecret: process.env.JWT_SECRET,
+  databaseUrl: process.env.DATABASE_URL,
+  awsAccessKey: process.env.AWS_ACCESS_KEY_ID,
+  awsSecretKey: process.env.AWS_SECRET_ACCESS_KEY,
+}
+
+// Validate at startup
+const required = ['JWT_SECRET', 'DATABASE_URL']
+for (const key of required) {
+  if (!process.env[key]) {
+    throw new Error(`Missing required environment variable: ${key}`)
+  }
+}
+```
+
+```bash title=".env.example"
+# Copy to .env and fill in values
+JWT_SECRET=
+DATABASE_URL=
+AWS_ACCESS_KEY_ID=
+AWS_SECRET_ACCESS_KEY=
+```
+
+```gitignore title=".gitignore"
+# Never commit secrets
+.env
+.env.local
+.env.production
+```
+
+### 3. Proper Encryption
+
+```javascript title="src/services/encryption.service.js"
+import crypto from 'crypto'
+
+const ALGORITHM = 'aes-256-gcm' // Authenticated encryption
+
+export class EncryptionService {
+  constructor(keyBase64) {
+    // Key from environment variable
+    this.key = Buffer.from(keyBase64, 'base64')
+  }
+
+  encrypt(plaintext) {
+    // Random IV for each encryption
+    const iv = crypto.randomBytes(16)
+    const cipher = crypto.createCipheriv(ALGORITHM, this.key, iv)
+    
+    let encrypted = cipher.update(plaintext, 'utf8', 'hex')
+    encrypted += cipher.final('hex')
+    
+    // Include auth tag for integrity
+    const authTag = cipher.getAuthTag()
+    
+    // Return IV + authTag + ciphertext
+    return iv.toString('hex') + authTag.toString('hex') + encrypted
+  }
+
+  decrypt(ciphertext) {
+    const iv = Buffer.from(ciphertext.slice(0, 32), 'hex')
+    const authTag = Buffer.from(ciphertext.slice(32, 64), 'hex')
+    const encrypted = ciphertext.slice(64)
+    
+    const decipher = crypto.createDecipheriv(ALGORITHM, this.key, iv)
+    decipher.setAuthTag(authTag)
+    
+    let decrypted = decipher.update(encrypted, 'hex', 'utf8')
+    decrypted += decipher.final('utf8')
+    
+    return decrypted
+  }
+}
+```
+
+### 4. Secret Management
+
+```javascript title="Using AWS Secrets Manager"
+import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager'
+
+const client = new SecretsManagerClient({ region: 'us-east-1' })
+
+export async function getSecret(secretName) {
+  const command = new GetSecretValueCommand({ SecretId: secretName })
+  const response = await client.send(command)
+  return JSON.parse(response.SecretString)
+}
+
+// Usage at startup
+const secrets = await getSecret('prod/myapp/secrets')
+process.env.DATABASE_URL = secrets.databaseUrl
+```
+
+---
+
+## Comparison
+
+| Aspect | Wrong | Right |
+|--------|-------|-------|
+| **Password hashing** | MD5, SHA1, SHA256 | bcrypt, Argon2 |
+| **Salt** | None, global, or hardcoded | Unique per password |
+| **Secrets storage** | In source code | Environment variables |
+| **Secret management** | .env in git | Secret manager service |
+| **Encryption IV** | Static/hardcoded | Random per encryption |
+| **Algorithm** | DES, 3DES, RC4 | AES-256-GCM |
+
+---
+
+## Detection Tips
+
+### Red Flags
+- `crypto.createHash('md5')` or `createHash('sha1')`
+- Hardcoded strings that look like keys/passwords
+- `password`, `secret`, `key`, `token` in source files
+- `.env` files in git history
+
+### Tools
+```bash
+# Scan for secrets
+npx gitleaks detect
+
+# Check for hardcoded secrets
+npx secretlint
+
+# Scan dependencies for known vulnerabilities
+npm audit
+```
+
+:::tip[Security Principle]
+Treat all secrets as if they will be exposed. Use secrets managers, rotate regularly, and never commit to version control.
+:::

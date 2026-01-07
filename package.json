@@ -1,0 +1,28 @@
+{
+  "name": "worst-backend-ever-vsa-edition",
+  "version": "0.0.0.0.1-alpha-beta-rc1-SNAPSHOT-FINAL",
+  "description": "DO NOT USE THIS IN PRODUCTION - VSA Antipattern Showcase",
+  "main": "src/features/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/features/index.js",
+    "dev": "node src/features/index.js",
+    "test": "echo 'tests are for losers' && exit 0",
+    "build": "echo 'what is build?'",
+    "lint": "echo 'linting is waste of time'",
+    "start:maybe": "node src/features/index.js",
+    "start:probably": "node src/features/index.js",
+    "start:idk": "node src/features/index.js"
+  },
+  "dependencies": {
+    "@hono/node-server": "*",
+    "better-sqlite3": "*",
+    "drizzle-orm": "*",
+    "hono": "*",
+    "reflect-metadata": "^0.2.2",
+    "tsyringe": "^4.10.0"
+  },
+  "devDependencies": {
+    "drizzle-kit": "*"
+  }
+}

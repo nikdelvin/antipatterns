@@ -1,0 +1,301 @@
+---
+title: Singleton Abuse
+description: When everything becomes a singleton, nothing is a singleton
+---
+
+## What is Singleton Abuse?
+
+The **Singleton Pattern** ensures a class has only one instance. **Singleton Abuse** occurs when:
+- Multiple "singletons" exist for the same purpose
+- Singletons are used for things that shouldn't be singletons
+- The singleton implementation is broken
+- Everything becomes a singleton
+
+<div class="wrong-way">
+
+## Real Example from the Project
+
+</div>
+
+<div class="file-path">src/core/singletons.js</div>
+
+```javascript title="src/core/singletons.js"
+// ANTIPATTERN: Multiple competing singletons for the same thing!
+
+// First database singleton
+class DatabaseSingleton {
+  static _instance = null
+  
+  constructor() {
+    // ANTIPATTERN: Constructor runs every time!
+    console.log('[SINGLETON] DatabaseSingleton constructor called')
+    this.connection = null
+    this.queries = []
+  }
+  
+  static getInstance() {
+    // ANTIPATTERN: Race condition in getInstance
+    if (!DatabaseSingleton._instance) {
+      // If two calls come at the same time, two instances created!
+      DatabaseSingleton._instance = new DatabaseSingleton()
+    }
+    return DatabaseSingleton._instance
+  }
+}
+
+// Second database singleton - WHY DO WE HAVE TWO?!
+class DatabaseConnection {
+  constructor() {
+    if (DatabaseConnection.instance) {
+      // ANTIPATTERN: Return from constructor
+      return DatabaseConnection.instance
+    }
+    DatabaseConnection.instance = this
+    this.connected = false
+  }
+  
+  static getInstance() {
+    if (!DatabaseConnection.instance) {
+      DatabaseConnection.instance = new DatabaseConnection()
+    }
+    return DatabaseConnection.instance
+  }
+}
+
+// Third way to get a database - configSingleton
+export const configSingleton = {
+  config: { debug: false, port: 8080, secret: 'different-secret' }
+}
+
+// Fourth way - frozen config
+export const frozenConfig = Object.freeze({
+  debug: true,
+  port: 3000,
+  secret: 'frozen-secret'
+})
+
+// Create instances on import (side effect!)
+export const db1 = DatabaseSingleton.getInstance()
+export const db2 = DatabaseConnection.getInstance()
+export const config1 = new ConfigManagerV1()
+export const config2 = configSingleton
+export const config3 = frozenConfig
+```
+
+### The Chaos in Usage
+
+```javascript title="Usage throughout codebase"
+// Different files use different "singletons"
+import { db1 } from './singletons.js'
+db1.connect() // Uses DatabaseSingleton
+
+import { db2 } from './singletons.js'
+db2.connect() // Uses DatabaseConnection - DIFFERENT!
+
+// Are they connected? Who knows!
+console.log(db1 === db2) // false - THEY'RE DIFFERENT!
+```
+
+## Why It's Bad
+
+### 1. Race Conditions in Creation
+
+```javascript
+// Two simultaneous calls
+const promise1 = asyncGetInstance()
+const promise2 = asyncGetInstance()
+
+// Both check _instance === null
+// Both create new instances
+// One overwrites the other
+// Data loss!
+```
+
+### 2. Multiple Singletons = No Singleton
+
+```javascript
+// We have:
+// - DatabaseSingleton.getInstance()
+// - DatabaseConnection.getInstance()
+// - db1, db2, config1, config2, config3
+
+// Which one is the "real" singleton?
+// They all hold different state!
+```
+
+### 3. Global State Everywhere
+
+```javascript
+// Singletons are global state with a fancy name
+// Any code anywhere can modify them
+db1.queries.push('dangerous query')
+
+// No encapsulation, no control
+```
+
+### 4. Testing Nightmare
+
+```javascript
+// Singletons persist between tests
+test('first test', () => {
+  db1.connect()
+  // db1 is now connected
+})
+
+test('second test', () => {
+  // db1 is STILL connected from previous test!
+  // Tests are not isolated!
+})
+```
+
+---
+
+<div class="right-way">
+
+## The Right Way
+
+</div>
+
+### 1. Dependency Injection Instead of Singleton
+
+```javascript title="src/services/database.js"
+// Just a regular class
+export class DatabaseService {
+  constructor(config) {
+    this.config = config
+    this.connection = null
+  }
+
+  async connect() {
+    this.connection = await createConnection(this.config)
+  }
+
+  async query(sql, params) {
+    return this.connection.query(sql, params)
+  }
+}
+```
+
+```javascript title="src/composition-root.js"
+// Single instance created at startup
+const db = new DatabaseService({
+  host: process.env.DB_HOST,
+  port: process.env.DB_PORT,
+})
+
+// Injected where needed
+const userService = new UserService(db)
+const orderService = new OrderService(db)
+```
+
+### 2. Module-Level Instance (Node.js)
+
+```javascript title="src/db.js"
+// ES Modules are cached - this runs once
+import { createConnection } from './connection.js'
+
+const connection = await createConnection(process.env.DATABASE_URL)
+
+export const db = {
+  query: (sql, params) => connection.query(sql, params),
+  close: () => connection.close(),
+}
+```
+
+```javascript title="src/users.js"
+// Every import gets the same instance
+import { db } from './db.js'
+
+export async function getUser(id) {
+  return db.query('SELECT * FROM users WHERE id = ?', [id])
+}
+```
+
+### 3. If You Must Use Singleton
+
+```javascript title="src/singleton.js"
+// Proper singleton with Symbol for true privacy
+const INSTANCE = Symbol('instance')
+
+class Database {
+  static [INSTANCE] = null
+
+  constructor() {
+    if (Database[INSTANCE]) {
+      throw new Error('Use Database.getInstance() instead of new')
+    }
+    Database[INSTANCE] = this
+  }
+
+  static getInstance() {
+    if (!Database[INSTANCE]) {
+      new Database()
+    }
+    return Database[INSTANCE]
+  }
+
+  // For testing only
+  static resetInstance() {
+    if (process.env.NODE_ENV === 'test') {
+      Database[INSTANCE] = null
+    }
+  }
+}
+```
+
+### 4. Thread-Safe Singleton (for concurrent scenarios)
+
+```javascript title="src/singleton.js"
+// Using a lock for async initialization
+let instance = null
+let initPromise = null
+
+export async function getDatabase() {
+  if (instance) return instance
+  
+  if (!initPromise) {
+    initPromise = createDatabase()
+  }
+  
+  instance = await initPromise
+  return instance
+}
+
+async function createDatabase() {
+  const connection = await connect()
+  return new DatabaseService(connection)
+}
+```
+
+---
+
+## When Singletons Are Actually Appropriate
+
+| Use Case | Appropriate? |
+|----------|--------------|
+| Logger | ✅ Yes - truly global |
+| Database pool | ✅ Yes - expensive resource |
+| Configuration | ⚠️ Maybe - consider DI |
+| Cache | ⚠️ Maybe - consider DI |
+| User service | ❌ No - use DI |
+| API client | ❌ No - use DI |
+
+---
+
+## Detection Tips
+
+### Red Flags
+- Multiple `getInstance()` methods for similar things
+- `static instance` or `static _instance` variables
+- Constructor that returns existing instance
+- Exports like `db1`, `db2`, `config1`, `config2`
+- Global state modified from multiple places
+
+### Tools
+- **ESLint** - Custom rule for singleton patterns
+- **SonarQube** - Global state detection
+- **Code review** - Count singleton instances
+
+:::tip[Singleton Rule]
+If you need a singleton, you probably need dependency injection instead. If you truly need a singleton, you only need **one**.
+:::

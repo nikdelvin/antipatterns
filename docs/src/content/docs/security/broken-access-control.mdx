@@ -1,0 +1,294 @@
+---
+title: Broken Access Control
+description: "OWASP A01: When users can access resources they shouldn't"
+---
+
+## What is Broken Access Control?
+
+**Broken Access Control** occurs when users can:
+- Access other users' data
+- Perform actions beyond their permissions
+- Escalate privileges
+- Bypass authentication entirely
+
+This is the #1 vulnerability in the OWASP Top 10 (2021).
+
+<div class="wrong-way">
+
+## Real Examples from the Project
+
+</div>
+
+### 1. No Authorization Check
+
+<div class="file-path">src/security/security.js</div>
+
+```javascript title="src/security/security.js"
+// ANTIPATTERN: No authorization check at all!
+export function getUserData(userId) {
+  // Anyone can access anyone's data!
+  // No check if the requester has permission
+  const query = `SELECT * FROM users WHERE id = ${userId}`
+  return { query, userId }
+}
+```
+
+### 2. Client-Controlled Access
+
+```javascript title="src/security/security.js"
+// ANTIPATTERN: Trust client-provided userId
+export function updateUser(userId, data, requestingUserId) {
+  // The client can override the target user!
+  if (data.userId) {
+    userId = data.userId // Client controls who gets updated!
+  }
+  return { updated: userId, data }
+}
+```
+
+**Attack:**
+```bash
+# User 123 updates user 456's data
+curl -X PUT /api/users/123 \
+  -d '{"userId": 456, "role": "admin"}'
+```
+
+### 3. Predictable Resource IDs
+
+```javascript title="src/security/security.js"
+// ANTIPATTERN: Sequential IDs allow enumeration
+export function getDocument(id) {
+  // Attacker can try: /documents/1, /documents/2, /documents/3...
+  // Sequential IDs reveal total count and allow harvesting
+  return { id, path: `/documents/${id}` }
+}
+```
+
+### 4. Path Traversal
+
+```javascript title="src/security/security.js"
+// ANTIPATTERN: User controls file path
+export function getFile(filename) {
+  // Attacker can request: "../../../etc/passwd"
+  // This reads files outside the uploads directory!
+  return fs.readFileSync(`/uploads/${filename}`, 'utf8')
+}
+```
+
+### 5. Missing Function-Level Access Control
+
+<div class="file-path">src/features/admin/admin.feature.js</div>
+
+```javascript title="src/features/admin/admin.feature.js"
+// ANTIPATTERN: Admin routes without authentication!
+const adminRoutes = new Hono()
+
+// No auth check - anyone can access!
+adminRoutes.get('/users', async (c) => {
+  return c.json(await adminService.getAllUsers())
+})
+
+adminRoutes.delete('/users/:id', async (c) => {
+  // Anyone can delete any user!
+  return c.json(await adminService.deleteUser(c.req.param('id')))
+})
+```
+
+---
+
+## Why It's Dangerous
+
+### Data Breach
+```javascript
+// Attacker iterates through all user IDs
+for (let id = 1; id < 10000; id++) {
+  const userData = await fetch(`/api/users/${id}`)
+  // Collects all user data!
+}
+```
+
+### Privilege Escalation
+```javascript
+// Regular user becomes admin
+await fetch('/api/users/me', {
+  method: 'PUT',
+  body: JSON.stringify({ role: 'admin' })
+})
+```
+
+### Account Takeover
+```javascript
+// Change another user's password
+await fetch('/api/users/victim/password', {
+  method: 'PUT',
+  body: JSON.stringify({ password: 'hacked' })
+})
+```
+
+---
+
+<div class="right-way">
+
+## The Right Way
+
+</div>
+
+### 1. Always Check Authorization
+
+```javascript title="src/middleware/auth.middleware.js"
+export function requireAuth(c, next) {
+  const user = c.get('user')
+  if (!user) {
+    return c.json({ error: 'Unauthorized' }, 401)
+  }
+  return next()
+}
+
+export function requireRole(...roles) {
+  return (c, next) => {
+    const user = c.get('user')
+    if (!roles.includes(user.role)) {
+      return c.json({ error: 'Forbidden' }, 403)
+    }
+    return next()
+  }
+}
+```
+
+```javascript title="src/routes/admin.routes.js"
+import { requireAuth, requireRole } from '../middleware/auth.middleware.js'
+
+// Protected routes
+adminRoutes.use('*', requireAuth)
+adminRoutes.use('*', requireRole('admin'))
+
+adminRoutes.get('/users', async (c) => {
+  return c.json(await adminService.getAllUsers())
+})
+```
+
+### 2. Verify Resource Ownership
+
+```javascript title="src/services/user.service.js"
+export class UserService {
+  async getUserData(requesterId, targetId) {
+    // Check if requester can access target
+    if (requesterId !== targetId) {
+      const requester = await this.getUser(requesterId)
+      if (requester.role !== 'admin') {
+        throw new ForbiddenError('Cannot access other user data')
+      }
+    }
+    
+    return this.getUser(targetId)
+  }
+}
+```
+
+### 3. Use UUIDs Instead of Sequential IDs
+
+```javascript title="src/services/document.service.js"
+import { randomUUID } from 'crypto'
+
+export class DocumentService {
+  async create(data) {
+    return this.db.documents.create({
+      data: {
+        id: randomUUID(), // Unpredictable ID
+        ...data
+      }
+    })
+  }
+}
+```
+
+### 4. Sanitize File Paths
+
+```javascript title="src/services/file.service.js"
+import path from 'path'
+
+export class FileService {
+  constructor(uploadDir) {
+    this.uploadDir = path.resolve(uploadDir)
+  }
+
+  async getFile(filename) {
+    // Resolve the full path
+    const filePath = path.resolve(this.uploadDir, filename)
+    
+    // Verify it's within the upload directory
+    if (!filePath.startsWith(this.uploadDir)) {
+      throw new ForbiddenError('Path traversal detected')
+    }
+    
+    return fs.readFile(filePath, 'utf8')
+  }
+}
+```
+
+### 5. Deny by Default
+
+```javascript title="src/middleware/authorization.js"
+const permissions = {
+  'user': ['read:own', 'update:own'],
+  'moderator': ['read:own', 'update:own', 'read:users'],
+  'admin': ['read:all', 'update:all', 'delete:all'],
+}
+
+export function can(action, resource) {
+  return (c, next) => {
+    const user = c.get('user')
+    const userPermissions = permissions[user.role] || []
+    
+    const required = `${action}:${resource}`
+    const hasPermission = userPermissions.some(p => 
+      p === required || p === `${action}:all`
+    )
+    
+    if (!hasPermission) {
+      return c.json({ error: 'Forbidden' }, 403)
+    }
+    
+    return next()
+  }
+}
+```
+
+---
+
+## Access Control Checklist
+
+| Check | Description |
+|-------|-------------|
+| ✓ Authentication | Is the user logged in? |
+| ✓ Authorization | Does user have permission? |
+| ✓ Ownership | Does user own this resource? |
+| ✓ Input validation | Is the input sanitized? |
+| ✓ Rate limiting | Prevent enumeration attacks |
+
+---
+
+## Detection Tips
+
+### Red Flags in Code Review
+- Missing auth middleware on routes
+- `userId` taken from request body instead of session
+- Sequential numeric IDs exposed in URLs
+- File paths constructed from user input
+- Role checks only on frontend
+
+### Testing
+```bash
+# Try accessing without authentication
+curl /api/admin/users
+
+# Try accessing other users' data
+curl /api/users/OTHER_USER_ID -H "Auth: MY_TOKEN"
+
+# Try path traversal
+curl "/api/files/..%2F..%2Fetc%2Fpasswd"
+```
+
+:::tip[Golden Rule]
+Always verify on the server that the current user has permission to perform the requested action on the requested resource.
+:::

@@ -1,0 +1,244 @@
+---
+title: Service Locator Antipattern
+description: When dependency injection becomes a global registry of doom
+---
+
+## What is a Service Locator?
+
+A **Service Locator** is a pattern where dependencies are fetched from a central registry at runtime, rather than being injected through constructors or parameters.
+
+While it looks like dependency injection, it's actually an antipattern because:
+- Dependencies are hidden (not visible in function signatures)
+- Testing requires mocking a global registry
+- The registry becomes a God Object
+
+<div class="wrong-way">
+
+## Real Example from the Project
+
+</div>
+
+<div class="file-path">src/core/di/container.js</div>
+
+```javascript title="src/core/di/container.js"
+// ANTIPATTERN: Service Locator pretending to be DI
+
+class Container {
+  constructor() {
+    this.services = {} // Global registry of everything
+    this.singletons = {}
+  }
+
+  // Imperative service fetching
+  get(name) {
+    console.log(`[DI] Resolving: ${name}`)
+    if (this.singletons[name]) {
+      return this.singletons[name]
+    }
+    if (this.services[name]) {
+      return new this.services[name]()
+    }
+    // ANTIPATTERN: Returns undefined instead of throwing
+    return undefined
+  }
+
+  registerSingleton(name, instance) {
+    console.log(`[DI] Singleton: ${name}`, instance)
+    this.singletons[name] = instance
+  }
+}
+
+// ANTIPATTERN: Global instance everyone imports
+export const container_instance = new Container()
+export const di = container_instance
+export const ioc = container_instance // Same thing, different name!
+
+// ANTIPATTERN: Helper that hides the dependency even more
+export function getService(name) {
+  return container_instance.get(name)
+}
+```
+
+### How It's Used (Badly)
+
+```javascript title="src/features/users/users.feature.js"
+import { getService } from '../../core/di/container.js'
+
+class UserService {
+  constructor() {
+    // ANTIPATTERN: Fetching dependencies inside constructor
+    // What dependencies does UserService have? Who knows!
+    this.db = getService('db')
+    this.cache = getService('cache')
+    this.logger = getService('logger')
+    this.config = getService('config')
+    this.mailer = getService('mailer')
+  }
+
+  getUser(id) {
+    // More hidden dependencies fetched at runtime
+    const validator = getService('validator')
+    return this.db.query(`SELECT * FROM users WHERE id = ${id}`)
+  }
+}
+```
+
+## Why It's Bad
+
+### 1. Hidden Dependencies
+```javascript
+// What does this class need to work?
+class OrderService {
+  process(order) {
+    // Surprise! It needs all of these:
+    const db = getService('db')
+    const payment = getService('payment')
+    const inventory = getService('inventory')
+    const email = getService('email')
+    const logger = getService('logger')
+    const metrics = getService('metrics')
+    // ...
+  }
+}
+
+// Compare to proper DI - dependencies are explicit:
+class OrderService {
+  constructor(db, payment, inventory, email, logger, metrics) {
+    // All dependencies visible in constructor!
+  }
+}
+```
+
+### 2. Testing Nightmare
+```javascript
+// Testing with Service Locator
+beforeEach(() => {
+  // Must mock the global registry
+  container_instance.singletons['db'] = mockDb
+  container_instance.singletons['cache'] = mockCache
+  container_instance.singletons['logger'] = mockLogger
+  // Forgot one? Test fails mysteriously!
+})
+
+afterEach(() => {
+  // Must clean up global state
+  container_instance.singletons = {}
+})
+```
+
+### 3. Runtime Errors Instead of Compile-Time
+```javascript
+// This won't fail until runtime
+const service = getService('databse') // Typo! Returns undefined
+service.query('...') // TypeError: Cannot read property 'query' of undefined
+```
+
+---
+
+<div class="right-way">
+
+## The Right Way
+
+</div>
+
+### Constructor Injection
+
+```javascript title="src/services/user.service.js"
+// Dependencies are explicit in the constructor
+export class UserService {
+  constructor(db, cache, logger) {
+    this.db = db
+    this.cache = cache
+    this.logger = logger
+  }
+
+  async getUser(id) {
+    const cached = await this.cache.get(`user:${id}`)
+    if (cached) return cached
+
+    const user = await this.db.users.findUnique({ where: { id } })
+    await this.cache.set(`user:${id}`, user)
+    return user
+  }
+}
+```
+
+### Composition Root
+
+```javascript title="src/composition-root.js"
+// All wiring happens in ONE place at startup
+import { DatabaseService } from './services/database.service.js'
+import { CacheService } from './services/cache.service.js'
+import { LoggerService } from './services/logger.service.js'
+import { UserService } from './services/user.service.js'
+import { OrderService } from './services/order.service.js'
+
+export function createServices() {
+  // Create infrastructure
+  const db = new DatabaseService(process.env.DATABASE_URL)
+  const cache = new CacheService(process.env.REDIS_URL)
+  const logger = new LoggerService()
+
+  // Create business services with explicit dependencies
+  const userService = new UserService(db, cache, logger)
+  const orderService = new OrderService(db, userService, logger)
+
+  return {
+    userService,
+    orderService,
+  }
+}
+```
+
+### Using a Real DI Container (Optional)
+
+```javascript title="src/container.ts"
+import { Container, Service, Inject } from 'typedi'
+
+@Service()
+class DatabaseService {
+  // ...
+}
+
+@Service()
+class UserService {
+  constructor(
+    @Inject() private db: DatabaseService,
+    @Inject() private cache: CacheService,
+  ) {}
+}
+
+// Dependencies are resolved automatically
+const userService = Container.get(UserService)
+```
+
+---
+
+## Comparison
+
+| Aspect | Service Locator | Proper DI |
+|--------|-----------------|-----------|
+| **Dependencies** | Hidden in code | Visible in constructor |
+| **Testing** | Mock global registry | Pass mocks directly |
+| **Errors** | Runtime | Compile-time (with TypeScript) |
+| **Refactoring** | Dangerous | Safe |
+| **Understanding** | Read all code | Read signature |
+
+---
+
+## Detection Tips
+
+### Red Flags
+- `getService()`, `resolve()`, `get()` called inside methods
+- Global container instance imported everywhere
+- Dependencies created inside constructors
+- `Container.get()` outside composition root
+
+### Tools
+- **ESLint** - Custom rule to flag `getService` calls
+- **TypeScript** - Strict mode catches missing dependencies
+- **Dependency cruiser** - Detect container imports
+
+:::tip[The Composition Root Rule]
+The DI container should only be touched in **one place** - the composition root at application startup. Everywhere else uses constructor injection.
+:::

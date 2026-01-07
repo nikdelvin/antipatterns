@@ -1,0 +1,95 @@
+---
+title: Error Handling Antipatterns
+description: How bad error handling leads to silent failures and security risks
+---
+
+## Overview
+
+Error handling antipatterns make applications unreliable and hard to debug. They can also expose sensitive information to attackers.
+
+## Common Problems
+
+### 1. Swallowing Errors
+Catching exceptions and ignoring them completely.
+
+### 2. Exposing Internal Errors
+Showing stack traces and implementation details to users.
+
+### 3. Generic Error Handling
+Catching everything with the same handler.
+
+---
+
+## Articles in This Section
+
+- [Error Swallowing](./swallowing) - Silent failures
+- [Error Exposure](./exposure) - Leaking sensitive information
+
+---
+
+## Quick Comparison
+
+| Antipattern | Problem | Solution |
+|-------------|---------|----------|
+| Error Swallowing | Silent failures | Log and rethrow |
+| Error Exposure | Information leakage | Sanitized responses |
+| Generic Catch | Lost context | Typed error handling |
+
+---
+
+## Key Principles
+
+### 1. Fail Loudly
+
+```javascript
+// Bad - silent failure
+try {
+  await saveData(data)
+} catch (e) {
+  // ignore
+}
+
+// Good - fail visibly
+try {
+  await saveData(data)
+} catch (error) {
+  logger.error('Failed to save data', { error, data })
+  throw new DataPersistenceError('Save failed', { cause: error })
+}
+```
+
+### 2. Separate Internal and External Errors
+
+```javascript
+// Internal: full details for logging
+logger.error('Database connection failed', {
+  host: config.db.host,
+  error: error.message,
+  stack: error.stack,
+})
+
+// External: safe message for users
+res.json({
+  error: 'Unable to process request',
+  code: 'SERVICE_UNAVAILABLE',
+})
+```
+
+### 3. Use Typed Errors
+
+```javascript
+class ValidationError extends Error {
+  constructor(field, message) {
+    super(message)
+    this.field = field
+    this.code = 'VALIDATION_ERROR'
+  }
+}
+
+class NotFoundError extends Error {
+  constructor(resource, id) {
+    super(`${resource} not found: ${id}`)
+    this.code = 'NOT_FOUND'
+  }
+}
+```

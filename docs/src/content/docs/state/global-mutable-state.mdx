@@ -1,0 +1,366 @@
+---
+title: Global Mutable State
+description: Shared variables that destroy predictability
+---
+
+## What is Global Mutable State?
+
+**Global Mutable State** is data stored in global variables that can be modified from anywhere in the application:
+
+```javascript
+// Any file can read and modify this
+global.currentUser = null
+global.config = {}
+global.cache = {}
+
+// Somewhere in the code...
+global.currentUser = user
+
+// Somewhere else...
+global.currentUser.name = 'changed'
+
+// Another place...
+delete global.currentUser
+```
+
+<div class="wrong-way">
+
+## Real Example from the Project
+
+</div>
+
+<div class="file-path">src/core/global.state.js</div>
+
+```javascript title="src/core/global.state.js"
+// ANTIPATTERN: Global Mutable State!
+
+// Global state that anyone can modify
+global.APP_STATE = {
+  users: [],
+  sessions: {},
+  config: {
+    debug: true,
+    maxUsers: 1000,
+    features: {},
+  },
+  cache: new Map(),
+  requestCount: 0,
+  errors: [],
+  lastUpdated: null,
+}
+
+// Functions that modify global state unpredictably
+export function addUser(user) {
+  global.APP_STATE.users.push(user)
+  global.APP_STATE.lastUpdated = Date.now()
+}
+
+export function removeUser(id) {
+  global.APP_STATE.users = global.APP_STATE.users.filter(u => u.id !== id)
+}
+
+export function updateConfig(key, value) {
+  global.APP_STATE.config[key] = value
+}
+
+export function incrementRequests() {
+  global.APP_STATE.requestCount++
+}
+
+export function addError(error) {
+  global.APP_STATE.errors.push(error)
+  // Never cleared - memory leak!
+}
+
+// Direct access from anywhere
+export function getState() {
+  return global.APP_STATE // Returns mutable reference!
+}
+
+// Race conditions
+export async function updateUserAsync(id, data) {
+  const user = global.APP_STATE.users.find(u => u.id === id)
+  await someAsyncOperation() // State might change here!
+  Object.assign(user, data) // Operating on stale reference
+}
+```
+
+### Usage Across the Codebase
+
+```javascript title="Various files"
+// file1.js
+import { getState } from './global.state.js'
+getState().users.push({ id: 1 }) // Direct mutation!
+
+// file2.js
+import { getState } from './global.state.js'
+getState().users = [] // Wipes all users!
+
+// file3.js
+import { getState } from './global.state.js'
+console.log(getState().users.length) // 0 or 1? Depends on execution order!
+```
+
+## Why It's Bad
+
+### 1. Unpredictable Behavior
+
+```javascript
+function processOrder(order) {
+  // What is APP_STATE.config.taxRate right now?
+  // Who last modified it?
+  // Will it change during this function?
+  const tax = order.total * global.APP_STATE.config.taxRate
+  return order.total + tax
+}
+```
+
+### 2. Race Conditions
+
+```javascript
+async function updateBalance(userId, amount) {
+  const user = global.users[userId]
+  const currentBalance = user.balance
+  
+  await validateTransaction(amount) // Takes 100ms
+  
+  // Another request modified user.balance during await!
+  user.balance = currentBalance + amount // Wrong!
+}
+```
+
+### 3. Impossible to Test
+
+```javascript
+describe('processOrder', () => {
+  it('calculates tax', () => {
+    // Have to set up global state
+    global.APP_STATE.config.taxRate = 0.1
+    
+    const result = processOrder({ total: 100 })
+    
+    // But other tests might have changed it!
+    // Tests affect each other - flaky tests
+  })
+})
+```
+
+### 4. Hidden Dependencies
+
+```javascript
+// What does this function need to work?
+function calculateShipping(order) {
+  // Secretly depends on:
+  // - global.APP_STATE.config.shippingRates
+  // - global.APP_STATE.config.freeShippingThreshold
+  // - global.currentUser.address
+  // But the signature doesn't show this!
+}
+```
+
+### 5. Memory Leaks
+
+```javascript
+// Errors array never gets cleaned
+global.APP_STATE.errors.push(error)
+
+// After running for days:
+// global.APP_STATE.errors.length === 1_000_000
+// Application crashes
+```
+
+---
+
+<div class="right-way">
+
+## The Right Way
+
+</div>
+
+### 1. Dependency Injection
+
+```javascript title="src/services/order.service.js"
+// Explicit dependencies - no hidden state
+class OrderService {
+  constructor(config, userRepository, taxCalculator) {
+    this.config = config
+    this.userRepository = userRepository
+    this.taxCalculator = taxCalculator
+  }
+  
+  async processOrder(order) {
+    const tax = this.taxCalculator.calculate(order.total)
+    return {
+      ...order,
+      tax,
+      total: order.total + tax,
+    }
+  }
+}
+
+// Dependencies are explicit and testable
+const orderService = new OrderService(
+  config,
+  userRepository,
+  taxCalculator
+)
+```
+
+### 2. Immutable State Updates
+
+```javascript title="src/state/store.js"
+// State is never mutated directly
+function reducer(state, action) {
+  switch (action.type) {
+    case 'ADD_USER':
+      return {
+        ...state,
+        users: [...state.users, action.payload],
+      }
+    
+    case 'UPDATE_CONFIG':
+      return {
+        ...state,
+        config: {
+          ...state.config,
+          [action.key]: action.value,
+        },
+      }
+    
+    default:
+      return state
+  }
+}
+
+// Dispatch actions instead of mutating
+store.dispatch({ type: 'ADD_USER', payload: newUser })
+```
+
+### 3. Request-Scoped State
+
+```javascript title="src/middleware/context.js"
+// State is scoped to the request
+export function contextMiddleware(c, next) {
+  // Create fresh context for each request
+  c.set('context', {
+    requestId: crypto.randomUUID(),
+    startTime: Date.now(),
+    user: null,
+    metadata: {},
+  })
+  
+  return next()
+}
+
+// Access through request context, not globals
+function handler(c) {
+  const ctx = c.get('context')
+  ctx.metadata.action = 'viewed'
+  // Doesn't affect other requests
+}
+```
+
+### 4. Encapsulated Modules
+
+```javascript title="src/cache/cache.js"
+// Private state, public interface
+const cache = new Map()
+const MAX_SIZE = 1000
+
+export function get(key) {
+  return cache.get(key)
+}
+
+export function set(key, value, ttl = 3600000) {
+  if (cache.size >= MAX_SIZE) {
+    // Evict oldest entry
+    const firstKey = cache.keys().next().value
+    cache.delete(firstKey)
+  }
+  
+  cache.set(key, {
+    value,
+    expires: Date.now() + ttl,
+  })
+}
+
+export function clear() {
+  cache.clear()
+}
+
+// Cannot access `cache` directly from outside
+// Controlled interface prevents misuse
+```
+
+### 5. Configuration as Immutable Object
+
+```javascript title="src/config/index.js"
+// Load once, freeze, never modify
+const config = Object.freeze({
+  database: {
+    host: process.env.DB_HOST,
+    port: parseInt(process.env.DB_PORT, 10),
+  },
+  auth: {
+    secret: process.env.JWT_SECRET,
+    expiresIn: '1h',
+  },
+  features: {
+    newCheckout: process.env.FEATURE_NEW_CHECKOUT === 'true',
+  },
+})
+
+export default config
+
+// Attempting to modify throws in strict mode
+config.database.host = 'hacked' // TypeError!
+```
+
+---
+
+## Comparison
+
+| Global State | Proper State Management |
+|--------------|-------------------------|
+| Accessible from anywhere | Explicit access through DI |
+| Mutable by anyone | Controlled mutations |
+| Hidden dependencies | Clear interfaces |
+| Unpredictable | Deterministic |
+| Untestable | Easily mockable |
+| Race conditions | Thread-safe |
+
+---
+
+## Testing Without Global State
+
+```javascript title="test/order.test.js"
+describe('OrderService', () => {
+  it('calculates tax correctly', () => {
+    // Create isolated dependencies
+    const mockConfig = { taxRate: 0.1 }
+    const mockTaxCalculator = {
+      calculate: (amount) => amount * mockConfig.taxRate
+    }
+    
+    const service = new OrderService(
+      mockConfig,
+      mockUserRepo,
+      mockTaxCalculator
+    )
+    
+    const result = service.processOrder({ total: 100 })
+    
+    expect(result.tax).toBe(10)
+  })
+  
+  // Tests are isolated - no shared state
+})
+```
+
+:::tip[State Locality]
+Keep state as local as possible:
+1. **Local variable** - best, dies when function ends
+2. **Instance variable** - good, scoped to object lifetime
+3. **Module variable** - okay if encapsulated
+4. **Global variable** - avoid at all costs
+:::

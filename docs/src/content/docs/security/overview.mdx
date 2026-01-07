@@ -1,0 +1,110 @@
+---
+title: Security Antipatterns Overview
+description: Understanding the OWASP Top 10 and common security vulnerabilities
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+Security antipatterns are vulnerabilities that attackers can exploit. The **OWASP Top 10** represents the most critical web application security risks.
+
+:::danger[Critical Warning]
+The example project intentionally contains all of these vulnerabilities for educational purposes. Never deploy such code in production.
+:::
+
+## OWASP Top 10 (2021)
+
+<Card title="A01: Broken Access Control" icon="warning">
+Users can act outside their intended permissions
+</Card>
+<Card title="A02: Cryptographic Failures" icon="warning">
+Weak encryption, plaintext passwords, hardcoded secrets
+</Card>
+<Card title="A03: Injection" icon="warning">
+SQL, Command, LDAP, and template injection attacks
+</Card>
+<Card title="A04: Insecure Design" icon="warning">
+Missing security controls in the design phase
+</Card>
+<Card title="A05: Security Misconfiguration" icon="warning">
+Default configs, unnecessary features, verbose errors
+</Card>
+<Card title="A06: Vulnerable Components" icon="warning">
+Using libraries with known vulnerabilities
+</Card>
+<Card title="A07: Authentication Failures" icon="warning">
+Weak auth, credential stuffing, session hijacking
+</Card>
+<Card title="A08: Data Integrity Failures" icon="warning">
+Untrusted deserialization, unsigned updates
+</Card>
+<Card title="A09: Logging Failures" icon="warning">
+Insufficient logging, sensitive data in logs
+</Card>
+<Card title="A10: SSRF" icon="warning">
+Server-side request forgery to internal systems
+</Card>
+
+## Project Security Vulnerabilities
+
+The example project exposes dangerous endpoints:
+
+| Endpoint | Vulnerability | Risk |
+|----------|---------------|------|
+| `/exec?cmd=...` | Command Injection | Critical |
+| `/sql?q=...` | SQL Injection | Critical |
+| `/eval` | Code Evaluation | Critical |
+| `/read?path=...` | Path Traversal | High |
+| `/security/secrets` | Secret Exposure | High |
+| `/backdoor` | Authentication Bypass | Critical |
+| `/debug` | Information Disclosure | Medium |
+
+## Security Principles
+
+### Defense in Depth
+Multiple layers of security controls:
+
+```
+┌─────────────────────────────────────────────┐
+│              Input Validation               │
+├─────────────────────────────────────────────┤
+│               Authentication                │
+├─────────────────────────────────────────────┤
+│               Authorization                 │
+├─────────────────────────────────────────────┤
+│             Parameterized Queries           │
+├─────────────────────────────────────────────┤
+│               Output Encoding               │
+├─────────────────────────────────────────────┤
+│                 Encryption                  │
+├─────────────────────────────────────────────┤
+│            Logging & Monitoring             │
+└─────────────────────────────────────────────┘
+```
+
+### Principle of Least Privilege
+- Users get minimum necessary permissions
+- Services run with minimum necessary access
+- Secrets have minimum necessary scope
+
+### Secure by Default
+- All features disabled until explicitly enabled
+- Strict input validation
+- Deny by default access control
+
+---
+
+## Quick Reference: Secure Coding
+
+| Vulnerability | Prevention |
+|---------------|------------|
+| SQL Injection | Parameterized queries |
+| XSS | Output encoding |
+| Command Injection | Avoid shell execution |
+| Path Traversal | Allowlist paths |
+| Weak Crypto | bcrypt, argon2 for passwords |
+| Secret Exposure | Environment variables |
+| SSRF | URL allowlisting |
+
+:::tip[Security Mindset]
+Assume all input is malicious. Validate everything. Trust nothing from the client.
+:::

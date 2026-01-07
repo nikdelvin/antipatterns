@@ -1,0 +1,379 @@
+---
+title: Callback Hell
+description: Deeply nested callbacks and mixed async patterns
+---
+
+## What is Callback Hell?
+
+**Callback Hell** (also called "Pyramid of Doom") is code with deeply nested callback functions that becomes unreadable and unmaintainable:
+
+```javascript
+getData(function(a) {
+  getMoreData(a, function(b) {
+    getEvenMoreData(b, function(c) {
+      getYetMoreData(c, function(d) {
+        getTheLastData(d, function(e) {
+          // Finally do something with e
+          // But wait, there's an error...
+        })
+      })
+    })
+  })
+})
+```
+
+<div class="wrong-way">
+
+## Real Example from the Project
+
+</div>
+
+<div class="file-path">src/utils/callback.hell.js</div>
+
+```javascript title="src/utils/callback.hell.js"
+// ANTIPATTERN: Callback Hell and Mixed Async Patterns!
+
+// Classic callback hell - pyramid of doom
+function processUserData(userId, callback) {
+  getUser(userId, function(err, user) {
+    if (err) {
+      callback(err)
+      return
+    }
+    getOrders(user.id, function(err, orders) {
+      if (err) {
+        callback(err)
+        return
+      }
+      processOrders(orders, function(err, processed) {
+        if (err) {
+          callback(err)
+          return
+        }
+        saveResults(processed, function(err, result) {
+          if (err) {
+            callback(err)
+            return
+          }
+          notifyUser(user.email, function(err) {
+            if (err) {
+              callback(err)
+              return
+            }
+            logActivity(user.id, 'processed', function(err) {
+              if (err) {
+                callback(err)
+                return
+              }
+              callback(null, result)
+            })
+          })
+        })
+      })
+    })
+  })
+}
+
+// Mixing callbacks with promises - chaos!
+async function mixedPatterns(id) {
+  const user = await getUser(id)
+  
+  getOrders(user.id, function(err, orders) {
+    if (err) throw err  // Uncatchable from async context!
+    
+    return new Promise((resolve, reject) => {
+      processAsync(orders)
+        .then(result => {
+          oldCallbackApi(result, (err, data) => {
+            if (err) reject(err)
+            resolve(data)
+          })
+        })
+        .catch(reject)
+    })
+  })
+  // This returns before callback completes!
+}
+```
+
+### Error Handling Nightmare
+
+```javascript title="src/utils/callback.hell.js"
+// Error handling becomes impossible
+function chainedOperations(data, callback) {
+  step1(data, function(err, result1) {
+    if (err) { callback(err); return }
+    step2(result1, function(err, result2) {
+      if (err) { callback(err); return }
+      step3(result2, function(err, result3) {
+        if (err) { callback(err); return }
+        step4(result3, function(err, result4) {
+          if (err) { callback(err); return }
+          // 4 levels of error handling
+          // Easy to forget one
+          // Stack traces are useless
+          callback(null, result4)
+        })
+      })
+    })
+  })
+}
+
+// What if step3 throws synchronously?
+// The callback won't be called!
+// Or it might be called twice!
+```
+
+## Why It's Bad
+
+### 1. Impossible to Read
+
+```javascript
+// Which closing brace belongs to which function?
+getData(function(a) {
+  getMoreData(a, function(b) {
+    evenMore(b, function(c) {
+      andMore(c, function(d) {
+        final(d, function(e) {
+          done(e)
+        })
+      })
+    })
+  })
+}) // <-- Is this the right place?
+```
+
+### 2. Error Handling is Inconsistent
+
+```javascript
+// Each callback needs its own error handling
+// Forget one? Silent failure.
+// Call callback twice? Bug.
+// Throw in callback? Uncaught exception.
+```
+
+### 3. Cannot Use Control Flow
+
+```javascript
+// How do you "return early" from nested callbacks?
+getData(function(data) {
+  if (!data.valid) {
+    return // This only returns from this function!
+  }
+  processData(data, function(result) {
+    // We're still processing even with invalid data
+  })
+})
+```
+
+### 4. Stack Traces are Useless
+
+```text
+Error: Something went wrong
+    at Object.<anonymous> (file.js:45:7)
+    at processTicksAndRejections (internal/process/task_queues.js:95:5)
+    
+// Where did this actually happen?
+// What was the data? 
+// You have no idea.
+```
+
+---
+
+<div class="right-way">
+
+## The Right Way
+
+</div>
+
+### 1. Use Async/Await
+
+```javascript title="src/services/user.service.js"
+// Clean, readable async/await
+async function processUserData(userId) {
+  const user = await getUser(userId)
+  const orders = await getOrders(user.id)
+  const processed = await processOrders(orders)
+  const result = await saveResults(processed)
+  
+  await notifyUser(user.email)
+  await logActivity(user.id, 'processed')
+  
+  return result
+}
+
+// Error handling is simple
+async function processWithErrors(userId) {
+  try {
+    const user = await getUser(userId)
+    const orders = await getOrders(user.id)
+    return await processOrders(orders)
+  } catch (error) {
+    logger.error('Processing failed', { userId, error })
+    throw error
+  }
+}
+```
+
+### 2. Promisify Legacy Callbacks
+
+```javascript title="src/utils/promisify.js"
+import { promisify } from 'util'
+
+// Convert callback-based functions to promises
+const readFile = promisify(fs.readFile)
+const writeFile = promisify(fs.writeFile)
+
+// Now use with async/await
+async function processFile(path) {
+  const content = await readFile(path, 'utf8')
+  const processed = transform(content)
+  await writeFile(path, processed)
+}
+
+// Custom promisify for non-standard callbacks
+function promisifyCustom(fn) {
+  return (...args) => new Promise((resolve, reject) => {
+    fn(...args, (error, ...results) => {
+      if (error) reject(error)
+      else resolve(results.length === 1 ? results[0] : results)
+    })
+  })
+}
+```
+
+### 3. Parallel Operations
+
+```javascript title="src/services/batch.service.js"
+// Bad: Sequential when could be parallel
+async function badSequential(userIds) {
+  const results = []
+  for (const id of userIds) {
+    results.push(await processUser(id)) // One at a time!
+  }
+  return results
+}
+
+// Good: Parallel execution
+async function goodParallel(userIds) {
+  return Promise.all(userIds.map(id => processUser(id)))
+}
+
+// Better: With concurrency limit
+import pLimit from 'p-limit'
+
+async function betterControlled(userIds, concurrency = 5) {
+  const limit = pLimit(concurrency)
+  return Promise.all(
+    userIds.map(id => limit(() => processUser(id)))
+  )
+}
+```
+
+### 4. Error Boundaries
+
+```javascript title="src/utils/errors.js"
+// Wrap async handlers with error boundary
+function asyncHandler(fn) {
+  return (req, res, next) => {
+    Promise.resolve(fn(req, res, next)).catch(next)
+  }
+}
+
+// Use in routes
+app.get('/users/:id', asyncHandler(async (req, res) => {
+  const user = await getUser(req.params.id)
+  res.json(user)
+}))
+// Errors automatically go to error middleware
+```
+
+### 5. Pipeline Pattern
+
+```javascript title="src/utils/pipeline.js"
+// Compose async functions
+async function pipeline(initialValue, ...fns) {
+  let result = initialValue
+  for (const fn of fns) {
+    result = await fn(result)
+  }
+  return result
+}
+
+// Usage
+const result = await pipeline(
+  userId,
+  getUser,
+  enrichWithOrders,
+  calculateTotal,
+  formatResponse
+)
+```
+
+---
+
+## Comparison
+
+| Callback Hell | Async/Await |
+|---------------|-------------|
+| Pyramid indentation | Flat structure |
+| Manual error propagation | try/catch |
+| Scattered error handling | Centralized errors |
+| Difficult debugging | Clear stack traces |
+| No built-in control flow | Standard if/for/while |
+| Race conditions common | Predictable execution |
+
+---
+
+## Migration Strategy
+
+### Step 1: Promisify External APIs
+
+```javascript
+// Wrap the callback API
+const legacyApi = promisify(oldCallbackFunction)
+```
+
+### Step 2: Use Async/Await Internally
+
+```javascript
+async function newImplementation() {
+  const result = await legacyApi()
+  return process(result)
+}
+```
+
+### Step 3: Keep Callback Interface (if needed)
+
+```javascript
+// For backwards compatibility
+function legacyInterface(callback) {
+  newImplementation()
+    .then(result => callback(null, result))
+    .catch(error => callback(error))
+}
+```
+
+:::tip[Avoid Zalgo]
+Don't mix sync and async behavior. If a function is sometimes async, make it always async:
+
+```javascript
+// Bad - sometimes sync, sometimes async
+function getUser(id, callback) {
+  if (cache.has(id)) {
+    callback(null, cache.get(id)) // Sync!
+  } else {
+    db.query(id, callback) // Async!
+  }
+}
+
+// Good - always async
+function getUser(id, callback) {
+  if (cache.has(id)) {
+    process.nextTick(() => callback(null, cache.get(id)))
+  } else {
+    db.query(id, callback)
+  }
+}
+```
+:::

@@ -1,0 +1,409 @@
+---
+title: Error Swallowing
+description: Silent failures that make debugging impossible
+---
+
+## What is Error Swallowing?
+
+**Error Swallowing** is catching exceptions and ignoring them, causing silent failures:
+
+```javascript
+try {
+  dangerousOperation()
+} catch (e) {
+  // This is fine 🔥
+}
+```
+
+The application continues running but is now in an unknown state.
+
+<div class="wrong-way">
+
+## Real Example from the Project
+
+</div>
+
+<div class="file-path">src/utils/error.handling.js</div>
+
+```javascript title="src/utils/error.handling.js"
+// ANTIPATTERN: Error Swallowing and Poor Error Handling!
+
+// Silent failure - the worst
+export function silentlyFail(fn) {
+  try {
+    return fn()
+  } catch (e) {
+    // Shh... pretend nothing happened
+    return null
+  }
+}
+
+// Log and ignore - still bad
+export function logAndIgnore(fn) {
+  try {
+    return fn()
+  } catch (e) {
+    console.log('Error:', e.message)
+    // Continue as if nothing happened
+    return undefined
+  }
+}
+
+// Catch-all that hides the real error
+export async function dangerousWrapper(fn) {
+  try {
+    return await fn()
+  } catch (e) {
+    // Transform all errors into generic message
+    throw new Error('Something went wrong')
+    // Original error? Stack trace? Gone.
+  }
+}
+
+// Error flag that's never checked
+export function errorFlagPattern() {
+  let hasError = false
+  
+  try {
+    riskyOperation()
+  } catch (e) {
+    hasError = true
+    // Store error but continue
+  }
+  
+  // hasError is never checked!
+  continueAnyway()
+}
+
+// Empty catch block
+export async function emptyHandler(data) {
+  let result
+  try {
+    result = await processData(data)
+  } catch (e) {}
+  
+  return result // undefined if error!
+}
+
+// Catching specific errors as generic
+export function wrongCatch() {
+  try {
+    return JSON.parse(userInput)
+  } catch (e) {
+    // Was it invalid JSON? Null input? Type error?
+    // We'll never know!
+    return {}
+  }
+}
+```
+
+### Error Swallowing in Async Code
+
+```javascript title="src/utils/error.handling.js"
+// Unhandled promise rejections
+export function fireAndForget(asyncFn) {
+  asyncFn() // No .catch(), no await
+  // Error? What error?
+}
+
+// Promise chain that loses errors
+export function brokenChain() {
+  getData()
+    .then(process)
+    .then(save)
+    // No .catch() - errors vanish!
+}
+
+// Async forEach swallows errors
+export async function asyncForEachBug(items) {
+  items.forEach(async (item) => {
+    await process(item) // Errors not propagated!
+  })
+  // Returns immediately, errors lost
+}
+```
+
+## Why It's Bad
+
+### 1. Silent Data Corruption
+
+```javascript
+function updateUser(userId, data) {
+  try {
+    validateData(data) // Throws on invalid!
+  } catch (e) {
+    // Ignored
+  }
+  
+  // Saves invalid data!
+  database.update(userId, data)
+}
+```
+
+### 2. Impossible to Debug
+
+```javascript
+// User reports: "My data disappeared"
+// Logs show: nothing
+// What happened? 
+
+function saveData(data) {
+  try {
+    return database.insert(data)
+  } catch (e) {
+    // No log, no trace, no evidence
+    return null
+  }
+}
+```
+
+### 3. Cascading Failures
+
+```javascript
+function getUser(id) {
+  try {
+    return database.find(id)
+  } catch (e) {
+    return null // Swallowed!
+  }
+}
+
+function processUser(id) {
+  const user = getUser(id)
+  user.name = 'Updated' // TypeError: Cannot read 'name' of null
+  // Error points here, but problem was in getUser!
+}
+```
+
+### 4. Security Vulnerabilities
+
+```javascript
+function validateToken(token) {
+  try {
+    return jwt.verify(token, secret)
+  } catch (e) {
+    return null // Invalid token? Expired? Tampered?
+  }
+}
+
+function authenticate(token) {
+  const user = validateToken(token)
+  if (user) {
+    // Grant access
+  }
+  // Null = no access, but we don't know WHY
+  // Was it an attack? Should we alert?
+}
+```
+
+---
+
+<div class="right-way">
+
+## The Right Way
+
+</div>
+
+### 1. Log and Rethrow
+
+```javascript title="src/utils/errors.js"
+export async function withErrorLogging(fn, context) {
+  try {
+    return await fn()
+  } catch (error) {
+    logger.error('Operation failed', {
+      error: error.message,
+      stack: error.stack,
+      context,
+    })
+    throw error // Propagate to caller!
+  }
+}
+```
+
+### 2. Typed Error Handling
+
+```javascript title="src/services/user.service.js"
+import { 
+  ValidationError, 
+  NotFoundError, 
+  DatabaseError 
+} from '../errors/index.js'
+
+async function getUser(id) {
+  try {
+    const user = await database.find(id)
+    
+    if (!user) {
+      throw new NotFoundError('User', id)
+    }
+    
+    return user
+  } catch (error) {
+    if (error instanceof NotFoundError) {
+      throw error // Known error, rethrow
+    }
+    
+    // Wrap unknown errors
+    logger.error('Database error', { error, id })
+    throw new DatabaseError('Failed to fetch user', { cause: error })
+  }
+}
+```
+
+### 3. Error Boundaries
+
+```javascript title="src/middleware/errorHandler.js"
+// Centralized error handling
+export function errorHandler(err, c) {
+  // Log all errors
+  logger.error('Request failed', {
+    error: err.message,
+    stack: err.stack,
+    path: c.req.path,
+    method: c.req.method,
+  })
+  
+  // Handle known errors
+  if (err instanceof ValidationError) {
+    return c.json({
+      error: err.message,
+      field: err.field,
+    }, 400)
+  }
+  
+  if (err instanceof NotFoundError) {
+    return c.json({
+      error: err.message,
+    }, 404)
+  }
+  
+  if (err instanceof AuthenticationError) {
+    return c.json({
+      error: 'Authentication required',
+    }, 401)
+  }
+  
+  // Unknown errors - don't expose details
+  return c.json({
+    error: 'Internal server error',
+    requestId: c.get('requestId'),
+  }, 500)
+}
+```
+
+### 4. Proper Async Error Handling
+
+```javascript title="src/utils/async.js"
+// Promise.all with proper error handling
+async function processAllItems(items) {
+  const results = await Promise.allSettled(
+    items.map(item => processItem(item))
+  )
+  
+  const failures = results.filter(r => r.status === 'rejected')
+  if (failures.length > 0) {
+    logger.error('Some items failed', {
+      failed: failures.length,
+      total: items.length,
+      errors: failures.map(f => f.reason.message),
+    })
+  }
+  
+  return results
+    .filter(r => r.status === 'fulfilled')
+    .map(r => r.value)
+}
+
+// Async iteration with error handling
+async function processItems(items) {
+  const errors = []
+  const results = []
+  
+  for (const item of items) {
+    try {
+      results.push(await processItem(item))
+    } catch (error) {
+      errors.push({ item, error })
+    }
+  }
+  
+  if (errors.length > 0) {
+    logger.warn('Partial failure', { errors })
+  }
+  
+  return { results, errors }
+}
+```
+
+### 5. Graceful Degradation (When Appropriate)
+
+```javascript title="src/services/cache.service.js"
+// Only swallow errors when you have a fallback
+async function getCached(key, fetchFn) {
+  try {
+    const cached = await cache.get(key)
+    if (cached) return cached
+  } catch (error) {
+    // Cache failure is non-critical
+    logger.warn('Cache read failed', { key, error: error.message })
+    // Continue to fetch - this is intentional fallback
+  }
+  
+  const fresh = await fetchFn()
+  
+  try {
+    await cache.set(key, fresh)
+  } catch (error) {
+    // Cache write failure is non-critical
+    logger.warn('Cache write failed', { key, error: error.message })
+    // Data is still valid, continue
+  }
+  
+  return fresh
+}
+```
+
+---
+
+## Comparison
+
+| Swallowing | Proper Handling |
+|------------|-----------------|
+| `catch (e) {}` | `catch (e) { log(e); throw e }` |
+| Silent failure | Visible failure |
+| Unknown state | Known state |
+| No debugging info | Full context |
+| Cascading bugs | Early failure |
+| Security blind spots | Attack visibility |
+
+---
+
+## Detection Checklist
+
+### Code Review Red Flags
+- Empty catch blocks: `catch (e) {}`
+- Return null/undefined in catch: `catch (e) { return null }`
+- Generic error messages: `throw new Error('Error')`
+- No logging in catch blocks
+- Fire-and-forget async calls
+
+### ESLint Rules
+```json
+{
+  "rules": {
+    "no-empty": ["error", { "allowEmptyCatch": false }],
+    "no-unused-vars": ["error", { "caughtErrors": "all" }],
+    "@typescript-eslint/no-floating-promises": "error"
+  }
+}
+```
+
+:::tip[Rule of Thumb]
+If you're tempted to swallow an error, ask yourself:
+1. Why is this error happening?
+2. What should the system do when it happens?
+3. How will I debug this in production?
+
+If you can't answer all three, don't swallow the error.
+:::

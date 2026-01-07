@@ -1,0 +1,297 @@
+---
+title: Monkey Patching
+description: Modifying built-in prototypes and global objects at runtime
+---
+
+## What is Monkey Patching?
+
+**Monkey Patching** is the dynamic modification of a class or module at runtime. In JavaScript, this typically means:
+- Adding methods to built-in prototypes (`Object.prototype`, `Array.prototype`, etc.)
+- Overriding global functions (`console.log`, `JSON.parse`)
+- Modifying imported modules
+
+<div class="wrong-way">
+
+## Real Example from the Project
+
+</div>
+
+<div class="file-path">src/core/patches.js</div>
+
+```javascript title="src/core/patches.js"
+// ANTIPATTERN: Modifying built-in prototypes!
+
+// ============================================================
+// STRING PROTOTYPE MODIFICATIONS
+// ============================================================
+
+String.prototype.toBoolean = function() {
+  const val = this.toLowerCase().trim()
+  if (['true', 'yes', '1', 'on'].includes(val)) return true
+  if (['false', 'no', '0', 'off'].includes(val)) return false
+  return !!this
+}
+
+// DANGER: This method name suggests safety but it's NOT safe!
+String.prototype.toSafeSQL = function() {
+  // This is NOT proper escaping!
+  return this.replace(/'/g, "''")
+}
+
+String.prototype.isEmail = function() {
+  // Broken email validation
+  return this.includes('@') && this.includes('.')
+}
+
+// ============================================================
+// ARRAY PROTOTYPE MODIFICATIONS
+// ============================================================
+
+Array.prototype.first = function() {
+  return this[0]
+}
+
+Array.prototype.last = function() {
+  return this[this.length - 1]
+}
+
+// DANGER: Modifies array in place!
+Array.prototype.shuffle = function() {
+  for (let i = this.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    [this[i], this[j]] = [this[j], this[i]]
+  }
+  return this
+}
+
+// ============================================================
+// OBJECT PROTOTYPE MODIFICATIONS
+// ============================================================
+
+// This breaks for...in loops!
+Object.prototype.isEmpty = function() {
+  return Object.keys(this).length === 0
+}
+```
+
+### Overriding Global Functions
+
+```javascript title="src/core/patches.js"
+// ANTIPATTERN: Override console.log!
+const _originalConsoleLog = console.log
+console.log = function(...args) {
+  const timestamp = new Date().toISOString()
+  const prefix = '[MONKEY PATCH]'
+  _originalConsoleLog.call(console, prefix, ...args)
+}
+
+// ANTIPATTERN: Override JSON.parse!
+const _originalJSONParse = JSON.parse
+JSON.parse = function(text, reviver) {
+  console.log('[MONKEY PATCH] JSON.parse called')
+  return _originalJSONParse.call(JSON, text, reviver)
+}
+
+// ANTIPATTERN: Suppress all errors!
+process.on('uncaughtException', (err) => {
+  console.log('[MONKEY PATCH] Uncaught exception (ignored):', err.message)
+  // Swallowed! Application continues in unknown state!
+})
+```
+
+## Why It's Bad
+
+### 1. Breaks for...in Loops
+
+```javascript
+// After adding isEmpty to Object.prototype:
+const obj = { name: 'John', age: 30 }
+
+for (const key in obj) {
+  console.log(key) // 'name', 'age', 'isEmpty' - UNEXPECTED!
+}
+```
+
+### 2. Conflicts with Libraries
+
+```javascript
+// Library A adds:
+Array.prototype.first = function() { return this[0] }
+
+// Library B adds (different behavior!):
+Array.prototype.first = function() { return this.length ? this[0] : null }
+
+// Your code breaks randomly depending on load order!
+```
+
+### 3. Hidden Side Effects
+
+```javascript
+// Developer writes:
+console.log('Debug info')
+
+// But actually happens:
+// [MONKEY PATCH] [2024-01-01T12:00:00.000Z] Debug info
+// Plus data is sent to a logging service
+// Plus timestamp is added to database
+// Plus...
+
+// None of this is visible from the code!
+```
+
+### 4. Impossible to Debug
+
+```javascript
+// Error happens in monkey-patched JSON.parse
+// Stack trace shows _originalJSONParse
+// Developer searches codebase for "JSON.parse" - finds nothing
+// Hours wasted finding the patch file
+```
+
+### 5. False Sense of Security
+
+```javascript
+// Developer sees:
+const safeQuery = userInput.toSafeSQL()
+// Thinks it's safe - IT'S NOT!
+
+// The toSafeSQL implementation is broken
+// SQL injection is still possible
+```
+
+---
+
+<div class="right-way">
+
+## The Right Way
+
+</div>
+
+### 1. Use Utility Functions
+
+```javascript title="src/utils/string.js"
+// Instead of String.prototype.toBoolean
+export function toBoolean(value) {
+  const val = String(value).toLowerCase().trim()
+  if (['true', 'yes', '1', 'on'].includes(val)) return true
+  if (['false', 'no', '0', 'off'].includes(val)) return false
+  return Boolean(value)
+}
+
+// Usage is explicit
+import { toBoolean } from './utils/string.js'
+const isEnabled = toBoolean(value)
+```
+
+### 2. Use Helper Classes
+
+```javascript title="src/utils/array.js"
+// Instead of Array.prototype extensions
+export class ArrayHelpers {
+  static first(arr) {
+    return arr[0]
+  }
+  
+  static last(arr) {
+    return arr[arr.length - 1]
+  }
+  
+  static shuffle(arr) {
+    // Returns NEW array, doesn't mutate
+    const result = [...arr]
+    for (let i = result.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1))
+      [result[i], result[j]] = [result[j], result[i]]
+    }
+    return result
+  }
+}
+
+// Usage
+import { ArrayHelpers } from './utils/array.js'
+const first = ArrayHelpers.first(items)
+const shuffled = ArrayHelpers.shuffle(items)
+```
+
+### 3. Use Proper Logging Libraries
+
+```javascript title="src/services/logger.js"
+// Instead of overriding console.log
+import pino from 'pino'
+
+export const logger = pino({
+  level: process.env.LOG_LEVEL || 'info',
+  transport: {
+    target: 'pino-pretty',
+    options: {
+      colorize: true,
+      translateTime: 'SYS:standard',
+    },
+  },
+})
+
+// Usage
+import { logger } from './services/logger.js'
+logger.info('User created', { userId: 123 })
+```
+
+### 4. Proper Error Handling
+
+```javascript title="src/app.js"
+// Instead of suppressing errors
+process.on('uncaughtException', (err) => {
+  logger.fatal({ err }, 'Uncaught exception')
+  // Give time to flush logs, then exit
+  setTimeout(() => process.exit(1), 1000)
+})
+
+process.on('unhandledRejection', (reason) => {
+  logger.error({ reason }, 'Unhandled rejection')
+  // Don't exit, but alert monitoring
+  alerting.notify('Unhandled rejection', reason)
+})
+```
+
+---
+
+## Comparison
+
+| Approach | Monkey Patch | Utility Function |
+|----------|--------------|------------------|
+| **Visibility** | Hidden | Explicit import |
+| **Conflicts** | Likely | Impossible |
+| **Testing** | Difficult | Easy |
+| **Type safety** | None | Full (with TS) |
+| **Debugging** | Nightmare | Straightforward |
+
+---
+
+## Detection Tips
+
+### Red Flags
+- `.prototype` modifications outside polyfills
+- Overriding global objects (`console`, `JSON`, `process`)
+- `Object.defineProperty` on built-in prototypes
+- Side-effect imports (`import './patches'`)
+
+### ESLint Rules
+```json
+{
+  "rules": {
+    "no-extend-native": "error",
+    "no-global-assign": "error"
+  }
+}
+```
+
+### Code Review
+```javascript
+// If you see this at the top of a file, investigate:
+import './monkey-patches.js' // Side effect import!
+import './setup.js' // What does "setup" do?
+import './init.js' // Why is init a module?
+```
+
+:::danger[Warning]
+The only acceptable use of prototype modification is **polyfills** for missing browser features, and even then, use standard polyfill libraries like core-js.
+:::

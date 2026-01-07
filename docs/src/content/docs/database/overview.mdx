@@ -1,0 +1,92 @@
+---
+title: Database Antipatterns
+description: Bad database design and query practices
+---
+
+## Overview
+
+Database antipatterns lead to poor performance, data integrity issues, and security vulnerabilities.
+
+## Common Problems
+
+### 1. God Table
+A single table with hundreds of columns trying to store everything.
+
+### 2. SQL Injection
+Building queries by concatenating user input.
+
+### 3. N+1 Queries
+Fetching related data in loops instead of joins.
+
+---
+
+## Articles in This Section
+
+- [God Table](./god-table) - One table to rule them all
+- [SQL Injection](./sql-injection) - The most dangerous vulnerability
+
+---
+
+## Quick Comparison
+
+| Antipattern | Problem | Solution |
+|-------------|---------|----------|
+| God Table | Unmaintainable, sparse data | Proper normalization |
+| SQL Injection | Data breach, data loss | Parameterized queries |
+| N+1 Queries | Performance disaster | Eager loading, joins |
+
+---
+
+## Key Principles
+
+### 1. Normalize Your Data
+
+```sql
+-- Bad: Everything in one table
+CREATE TABLE everything (
+  user_id INT,
+  user_name VARCHAR,
+  order_id INT,
+  order_date DATE,
+  product_id INT,
+  product_name VARCHAR,
+  -- 200 more columns...
+)
+
+-- Good: Separate, related tables
+CREATE TABLE users (id, name, email)
+CREATE TABLE orders (id, user_id, date)
+CREATE TABLE products (id, name, price)
+CREATE TABLE order_items (order_id, product_id, quantity)
+```
+
+### 2. Always Use Parameterized Queries
+
+```javascript
+// Bad - SQL injection
+const sql = `SELECT * FROM users WHERE id = ${userId}`
+
+// Good - parameterized
+const sql = `SELECT * FROM users WHERE id = ?`
+db.query(sql, [userId])
+```
+
+### 3. Optimize Fetching Patterns
+
+```javascript
+// Bad - N+1 queries
+const users = await db.query('SELECT * FROM users')
+for (const user of users) {
+  user.orders = await db.query(
+    'SELECT * FROM orders WHERE user_id = ?',
+    [user.id]
+  )
+}
+
+// Good - single query with join
+const users = await db.query(`
+  SELECT u.*, o.*
+  FROM users u
+  LEFT JOIN orders o ON o.user_id = u.id
+`)
+```

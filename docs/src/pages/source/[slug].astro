@@ -1,0 +1,241 @@
+---
+import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro'
+import SourceFile from '../../components/SourceFile.astro'
+import fs from 'node:fs'
+import path from 'node:path'
+
+export async function getStaticPaths() {
+  const projectRoot = path.resolve(process.cwd(), '..')
+  const paths: { params: { slug: string }, props: { filePath: string, title: string } }[] = []
+  
+  function collectFiles(dir: string, base: string) {
+    try {
+      const items = fs.readdirSync(dir, { withFileTypes: true })
+      for (const item of items) {
+        const fullPath = path.join(dir, item.name)
+        const relativePath = path.relative(base, fullPath)
+        
+        if (item.isDirectory() && !item.name.startsWith('.') && item.name !== 'node_modules' && item.name !== 'docs') {
+          collectFiles(fullPath, base)
+        } else if (item.name.endsWith('.js') || item.name.endsWith('.sql') || item.name.endsWith('.json')) {
+          const fileSlug = relativePath.replace(/\//g, '--').replace(/\./g, '-')
+          paths.push({
+            params: { slug: fileSlug },
+            props: { 
+              filePath: relativePath,
+              title: item.name
+            }
+          })
+        }
+      }
+    } catch (e) {}
+  }
+  
+  collectFiles(projectRoot, projectRoot)
+  
+  return paths
+}
+
+const { filePath, title } = Astro.props
+
+// Build file tree for TOC headings
+const projectRoot = path.resolve(process.cwd(), '..')
+const srcDir = path.join(projectRoot, 'src')
+
+interface HeadingItem {
+  depth: number
+  text: string
+  slug: string
+}
+
+const headings: HeadingItem[] = [
+  { depth: 2, text: '📋 Source Files', slug: 'overview' },
+]
+
+function collectHeadings(dir: string, base: string, depth: number) {
+  try {
+    const items = fs.readdirSync(dir, { withFileTypes: true })
+    const sorted = items.sort((a, b) => {
+      if (a.isDirectory() && !b.isDirectory()) return -1
+      if (!a.isDirectory() && b.isDirectory()) return 1
+      return a.name.localeCompare(b.name)
+    })
+    
+    for (const item of sorted) {
+      const fullPath = path.join(dir, item.name)
+      const relativePath = path.relative(base, fullPath)
+      const itemSlug = relativePath.replace(/\//g, '--').replace(/\./g, '-')
+      
+      if (item.isDirectory()) {
+        headings.push({ depth: 2, text: `📁 ${item.name}/`, slug: `folder-${item.name}` })
+        collectHeadings(fullPath, base, 3)
+      } else if (item.name.endsWith('.js') || item.name.endsWith('.sql') || item.name.endsWith('.json')) {
+        // Mark current file
+        const isCurrent = relativePath === filePath
+        headings.push({ 
+          depth: depth, 
+          text: isCurrent ? `▶ ${item.name}` : item.name, 
+          slug: itemSlug 
+        })
+      }
+    }
+  } catch (e) {}
+}
+
+// Add root files
+try {
+  const rootItems = fs.readdirSync(projectRoot, { withFileTypes: true })
+  for (const item of rootItems) {
+    if (!item.isDirectory() && (item.name.endsWith('.js') || item.name === 'package.json')) {
+      const itemSlug = item.name.replace(/\./g, '-')
+      const isCurrent = item.name === filePath
+      headings.push({ 
+        depth: 3, 
+        text: isCurrent ? `▶ ${item.name}` : item.name, 
+        slug: itemSlug 
+      })
+    }
+  }
+} catch (e) {}
+
+collectHeadings(srcDir, projectRoot, 3)
+
+// Build breadcrumb from path
+const pathParts = filePath.split('/')
+const breadcrumb = pathParts.map((part, i) => ({
+  name: part,
+  path: pathParts.slice(0, i + 1).join('/')
+}))
+---
+
+<StarlightPage 
+  frontmatter={{ 
+    title: `📄 ${title}`,
+    description: `Source file: ${filePath}`,
+    tableOfContents: { minHeadingLevel: 2, maxHeadingLevel: 3 },
+  }}
+  headings={headings}
+>
+  <nav class="breadcrumb">
+    <a href="/source/">source</a>
+    {breadcrumb.map((part, i) => (
+      <>
+        <span class="separator">/</span>
+        {i === breadcrumb.length - 1 ? (
+          <span class="current">{part.name}</span>
+        ) : (
+          <span>{part.name}</span>
+        )}
+      </>
+    ))}
+  </nav>
+  
+  <SourceFile filePath={filePath} />
+  
+  <div class="nav-links">
+    <a href="/source/" class="back-link">← Back to Overview</a>
+  </div>
+</StarlightPage>
+
+<style>
+  .breadcrumb {
+    font-family: var(--sl-font-mono);
+    font-size: 0.85rem;
+    padding: 0.75rem 1rem;
+    background: var(--sl-color-gray-6);
+    border-radius: 6px;
+    margin-bottom: 1rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+  }
+  
+  .breadcrumb a {
+    color: var(--sl-color-accent);
+    text-decoration: none;
+  }
+  
+  .breadcrumb a:hover {
+    text-decoration: underline;
+  }
+  
+  .separator {
+    color: var(--sl-color-gray-4);
+  }
+  
+  .current {
+    color: var(--sl-color-white);
+    font-weight: 600;
+  }
+  
+  .nav-links {
+    margin-top: 1.5rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--sl-color-gray-5);
+  }
+  
+  .back-link {
+    color: var(--sl-color-accent);
+    text-decoration: none;
+  }
+  
+  .back-link:hover {
+    text-decoration: underline;
+  }
+  .nav-links {
+    margin-top: 1.5rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--sl-color-gray-5);
+  }
+  
+  .back-link {
+    color: var(--sl-color-accent);
+    text-decoration: none;
+  }
+  
+  .back-link:hover {
+    text-decoration: underline;
+  }
+  
+  @media (max-width: 768px) {
+    .source-layout {
+      grid-template-columns: 1fr;
+    }
+    
+    .source-sidebar {
+      display: none;
+    }
+  }
+</style>
+
+<script>
+  // Redirect TOC anchor clicks to actual source file pages
+  document.addEventListener('DOMContentLoaded', () => {
+    const toc = document.querySelector('starlight-toc, .right-sidebar')
+    if (!toc) return
+    
+    toc.addEventListener('click', (e) => {
+      const link = (e.target as HTMLElement).closest('a')
+      if (!link) return
+      
+      const href = link.getAttribute('href')
+      if (!href || !href.startsWith('#')) return
+      
+      const slug = href.slice(1) // Remove #
+      
+      // Overview goes to index
+      if (slug === 'overview') {
+        e.preventDefault()
+        window.location.href = '/source/'
+        return
+      }
+      
+      // Skip special anchors and folder links
+      if (slug === '_top' || slug.startsWith('folder-')) return
+      
+      // Redirect to actual source page
+      e.preventDefault()
+      window.location.href = `/source/${slug}/`
+    })
+  })
+</script>

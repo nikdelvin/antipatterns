@@ -1,0 +1,115 @@
+---
+import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro'
+import FileBrowser from '../../components/FileBrowser.astro'
+import fs from 'node:fs'
+import path from 'node:path'
+
+// Build file tree for TOC headings
+const projectRoot = path.resolve(process.cwd(), '..')
+const srcDir = path.join(projectRoot, 'src')
+
+interface HeadingItem {
+  depth: number
+  text: string
+  slug: string
+}
+
+const headings: HeadingItem[] = [
+  { depth: 2, text: '📋 Source Files', slug: 'overview' },
+]
+
+function collectHeadings(dir: string, base: string, depth: number) {
+  try {
+    const items = fs.readdirSync(dir, { withFileTypes: true })
+    const sorted = items.sort((a, b) => {
+      if (a.isDirectory() && !b.isDirectory()) return -1
+      if (!a.isDirectory() && b.isDirectory()) return 1
+      return a.name.localeCompare(b.name)
+    })
+    
+    for (const item of sorted) {
+      const fullPath = path.join(dir, item.name)
+      const relativePath = path.relative(base, fullPath)
+      const slug = relativePath.replace(/\//g, '--').replace(/\./g, '-')
+      
+      if (item.isDirectory()) {
+        headings.push({ depth: 2, text: `📁 ${item.name}/`, slug: `folder-${item.name}` })
+        collectHeadings(fullPath, base, 3)
+      } else if (item.name.endsWith('.js') || item.name.endsWith('.sql') || item.name.endsWith('.json')) {
+        headings.push({ depth: depth, text: item.name, slug })
+      }
+    }
+  } catch (e) {}
+}
+
+// Add root files
+try {
+  const rootItems = fs.readdirSync(projectRoot, { withFileTypes: true })
+  for (const item of rootItems) {
+    if (!item.isDirectory() && (item.name.endsWith('.js') || item.name === 'package.json')) {
+      const slug = item.name.replace(/\./g, '-')
+      headings.push({ depth: 3, text: item.name, slug })
+    }
+  }
+} catch (e) {}
+
+collectHeadings(srcDir, projectRoot, 3)
+---
+
+<StarlightPage 
+  frontmatter={{ 
+    title: 'Source Files',
+    description: 'Browse the actual antipattern source code',
+    tableOfContents: { minHeadingLevel: 2, maxHeadingLevel: 3 },
+  }}
+  headings={headings}
+>
+  <p>
+    This section lets you explore the <strong>actual source files</strong> of the antipatterns project.
+    All code shown here is read directly from the project files during the documentation build.
+  </p>
+  
+  <div class="warning-box">
+    This code is intentionally terrible! It demonstrates what <em>not</em> to do.
+    Do not copy this code into your projects.
+  </div>
+  
+  <p>Use the <strong>Table of Contents</strong> on the right to navigate files, or browse the full structure below:</p>
+  
+  <FileBrowser />
+</StarlightPage>
+
+<style>
+  .warning-box {
+    background: linear-gradient(135deg, #ff6b6b22, #ffa50022);
+    border: 1px solid #ff6b6b44;
+    border-radius: 8px;
+    padding: 1rem;
+    margin: 1rem 0;
+  }
+</style>
+
+<script>
+  // Redirect TOC anchor clicks to actual source file pages
+  document.addEventListener('DOMContentLoaded', () => {
+    const toc = document.querySelector('starlight-toc, .right-sidebar')
+    if (!toc) return
+    
+    toc.addEventListener('click', (e) => {
+      const link = (e.target as HTMLElement).closest('a')
+      if (!link) return
+      
+      const href = link.getAttribute('href')
+      if (!href || !href.startsWith('#')) return
+      
+      const slug = href.slice(1) // Remove #
+      
+      // Skip special anchors and folder links
+      if (slug === 'overview' || slug === '_top' || slug.startsWith('folder-')) return
+      
+      // Redirect to actual source page
+      e.preventDefault()
+      window.location.href = `/source/${slug}/`
+    })
+  })
+</script>

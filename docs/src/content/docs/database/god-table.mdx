@@ -1,0 +1,346 @@
+---
+title: God Table
+description: One table with hundreds of columns
+---
+
+## What is a God Table?
+
+A **God Table** is a database table that tries to store everything:
+
+```sql
+CREATE TABLE everything (
+  id INT PRIMARY KEY,
+  -- User fields
+  user_name VARCHAR(255),
+  user_email VARCHAR(255),
+  user_password VARCHAR(255),
+  user_created_at TIMESTAMP,
+  -- Order fields  
+  order_id INT,
+  order_date DATE,
+  order_total DECIMAL,
+  -- Product fields
+  product_name VARCHAR(255),
+  product_price DECIMAL,
+  -- ... 200 more columns
+)
+```
+
+<div class="wrong-way">
+
+## Real Example from the Project
+
+</div>
+
+<div class="file-path">src/db/migrations/0000_init.sql</div>
+
+```sql title="src/db/migrations/0000_init.sql"
+-- ANTIPATTERN: God Table with 200+ columns!
+
+CREATE TABLE god_table (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  
+  -- User data (should be separate table)
+  username TEXT NOT NULL,
+  password TEXT NOT NULL,  -- Plain text!
+  email TEXT,
+  first_name TEXT,
+  last_name TEXT,
+  middle_name TEXT,
+  nickname TEXT,
+  title TEXT,
+  suffix TEXT,
+  user_created_at TEXT,
+  user_updated_at TEXT,
+  last_login TEXT,
+  login_count INTEGER DEFAULT 0,
+  
+  -- Address (should be separate table)
+  address_line1 TEXT,
+  address_line2 TEXT,
+  address_line3 TEXT,
+  city TEXT,
+  state TEXT,
+  postal_code TEXT,
+  country TEXT,
+  latitude REAL,
+  longitude REAL,
+  
+  -- Billing address (duplicate of above!)
+  billing_address_line1 TEXT,
+  billing_address_line2 TEXT,
+  billing_city TEXT,
+  billing_state TEXT,
+  billing_postal_code TEXT,
+  billing_country TEXT,
+  
+  -- Shipping address (triplicate!)
+  shipping_address_line1 TEXT,
+  shipping_address_line2 TEXT,
+  shipping_city TEXT,
+  shipping_state TEXT,
+  shipping_postal_code TEXT,
+  shipping_country TEXT,
+  
+  -- Order data (should be separate table)
+  order_id TEXT,
+  order_date TEXT,
+  order_status TEXT,
+  order_total REAL,
+  order_tax REAL,
+  order_shipping REAL,
+  order_discount REAL,
+  
+  -- Product data (should be separate table)  
+  product_id TEXT,
+  product_name TEXT,
+  product_description TEXT,
+  product_price REAL,
+  product_quantity INTEGER,
+  
+  -- Credit card (NEVER store like this!)
+  credit_card_number TEXT,
+  credit_card_cvv TEXT,
+  credit_card_expiry TEXT,
+  
+  -- JSON blob for "flexibility"
+  metadata TEXT,  -- JSON string
+  settings TEXT,  -- More JSON
+  preferences TEXT,  -- Even more JSON
+  
+  -- Audit fields scattered
+  created_at TEXT,
+  updated_at TEXT,
+  deleted_at TEXT,
+  created_by TEXT,
+  updated_by TEXT,
+  deleted_by TEXT,
+  
+  -- Status flags (should be enum or lookup table)
+  is_active INTEGER DEFAULT 1,
+  is_verified INTEGER DEFAULT 0,
+  is_admin INTEGER DEFAULT 0,
+  is_premium INTEGER DEFAULT 0,
+  is_deleted INTEGER DEFAULT 0,
+  
+  -- And 100+ more columns...
+);
+```
+
+## Why It's Bad
+
+### 1. Sparse Data / Wasted Space
+
+```sql
+-- Most rows have NULLs everywhere
+SELECT * FROM god_table WHERE id = 1;
+
+-- Result:
+-- id=1, username='john', password='123', email='j@x.com'
+-- ... order_id=NULL, order_date=NULL, product_id=NULL ...
+-- 180 columns are NULL
+```
+
+### 2. No Data Integrity
+
+```sql
+-- What does this query return?
+SELECT * FROM god_table 
+WHERE username = 'john';
+
+-- A user? An order? A product? 
+-- All three mixed together?
+-- You can't tell!
+```
+
+### 3. Impossible to Query Efficiently
+
+```sql
+-- Need all orders for a user?
+-- They're scattered across rows!
+SELECT order_id, order_date, order_total
+FROM god_table
+WHERE username = 'john' AND order_id IS NOT NULL;
+
+-- Need order items? Join to... itself?
+-- This is madness.
+```
+
+### 4. Schema Evolution Nightmare
+
+```sql
+-- Need to add a field for orders?
+ALTER TABLE god_table ADD COLUMN order_notes TEXT;
+
+-- All rows affected, including users and products
+-- Table locks, slow migration
+-- What if you have 10 million rows?
+```
+
+### 5. No Relationships
+
+```sql
+-- How do you know which order belongs to which user?
+-- How do you know which products are in which order?
+-- Answer: You don't. You guess.
+```
+
+---
+
+<div class="right-way">
+
+## The Right Way
+
+</div>
+
+### 1. Proper Normalization
+
+```sql title="Normalized Schema"
+-- Separate, focused tables
+CREATE TABLE users (
+  id INTEGER PRIMARY KEY,
+  username TEXT NOT NULL UNIQUE,
+  email TEXT NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE addresses (
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER REFERENCES users(id),
+  type TEXT CHECK (type IN ('billing', 'shipping')),
+  line1 TEXT NOT NULL,
+  line2 TEXT,
+  city TEXT NOT NULL,
+  state TEXT,
+  postal_code TEXT NOT NULL,
+  country TEXT NOT NULL
+);
+
+CREATE TABLE orders (
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER REFERENCES users(id),
+  status TEXT CHECK (status IN ('pending', 'paid', 'shipped', 'delivered')),
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  total DECIMAL(10, 2)
+);
+
+CREATE TABLE products (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT,
+  price DECIMAL(10, 2) NOT NULL
+);
+
+CREATE TABLE order_items (
+  id INTEGER PRIMARY KEY,
+  order_id INTEGER REFERENCES orders(id),
+  product_id INTEGER REFERENCES products(id),
+  quantity INTEGER NOT NULL,
+  unit_price DECIMAL(10, 2) NOT NULL
+);
+```
+
+### 2. Clear Relationships
+
+```sql
+-- Get user with orders and items
+SELECT 
+  u.username,
+  o.id AS order_id,
+  o.total,
+  oi.quantity,
+  p.name AS product_name
+FROM users u
+JOIN orders o ON o.user_id = u.id
+JOIN order_items oi ON oi.order_id = o.id
+JOIN products p ON p.id = oi.product_id
+WHERE u.id = 1;
+```
+
+### 3. With Drizzle ORM
+
+```javascript title="src/db/schema.js"
+import { sqliteTable, text, integer, real } from 'drizzle-orm/sqlite-core'
+
+export const users = sqliteTable('users', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  username: text('username').notNull().unique(),
+  email: text('email').notNull().unique(),
+  passwordHash: text('password_hash').notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp' })
+    .default(sql`CURRENT_TIMESTAMP`),
+})
+
+export const orders = sqliteTable('orders', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  userId: integer('user_id').references(() => users.id),
+  status: text('status', { 
+    enum: ['pending', 'paid', 'shipped', 'delivered'] 
+  }),
+  total: real('total'),
+  createdAt: integer('created_at', { mode: 'timestamp' }),
+})
+
+export const orderItems = sqliteTable('order_items', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  orderId: integer('order_id').references(() => orders.id),
+  productId: integer('product_id').references(() => products.id),
+  quantity: integer('quantity').notNull(),
+  unitPrice: real('unit_price').notNull(),
+})
+```
+
+### 4. Proper Queries
+
+```javascript title="src/repositories/order.repository.js"
+// Get user's orders with items
+async function getUserOrders(userId) {
+  return await db
+    .select({
+      order: orders,
+      items: orderItems,
+      product: products,
+    })
+    .from(orders)
+    .leftJoin(orderItems, eq(orderItems.orderId, orders.id))
+    .leftJoin(products, eq(products.id, orderItems.productId))
+    .where(eq(orders.userId, userId))
+}
+```
+
+---
+
+## Comparison
+
+| God Table | Normalized Schema |
+|-----------|-------------------|
+| 200+ columns | 5-15 columns per table |
+| Mostly NULL values | Dense data |
+| No relationships | Foreign keys |
+| Slow queries | Indexed queries |
+| Hard to maintain | Easy to evolve |
+| No integrity | Constraints enforced |
+
+---
+
+## Normalization Rules
+
+### 1NF: Atomic Values
+No repeating groups, no arrays in columns.
+
+### 2NF: Full Dependency
+Every non-key column depends on the full key.
+
+### 3NF: No Transitive Dependencies
+Non-key columns don't depend on other non-key columns.
+
+### When to Denormalize
+- Read-heavy analytics (after normalization)
+- Caching layers
+- Search indexes
+- Never as the primary schema!
+
+:::tip[Table Size Rule]
+If a table has more than 20-30 columns, consider splitting it. Ask: "Does this column describe this entity, or a related entity?"
+:::

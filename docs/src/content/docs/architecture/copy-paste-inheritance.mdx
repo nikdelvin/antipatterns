@@ -1,0 +1,325 @@
+---
+title: Copy-Paste Inheritance
+description: When code is duplicated instead of properly abstracted
+---
+
+## What is Copy-Paste Inheritance?
+
+**Copy-Paste Inheritance** occurs when developers copy an entire class and modify it slightly instead of:
+- Using proper inheritance
+- Extracting common functionality
+- Using composition
+
+This leads to multiple nearly-identical classes that diverge over time.
+
+<div class="wrong-way">
+
+## Real Example from the Project
+
+</div>
+
+<div class="file-path">src/models/models.js</div>
+
+```javascript title="src/models/models.js"
+// ANTIPATTERN: Three versions of the same class, copy-pasted
+
+class UserV1 {
+  constructor(data) {
+    this.id = data.id
+    this.username = data.username
+    this.email = data.email
+    this.password = data.password
+    this.createdAt = data.createdAt || new Date()
+  }
+
+  validate() {
+    // Returns boolean
+    if (!this.username) return false
+    if (!this.email) return false
+    if (!this.password) return false
+    return true
+  }
+
+  toJSON() {
+    return {
+      id: this.id,
+      username: this.username,
+      email: this.email,
+      createdAt: this.createdAt
+    }
+  }
+}
+
+// Copy-pasted and modified - V2
+class UserV2 {
+  constructor(data) {
+    this.id = data.id
+    this.username = data.username
+    this.email = data.email
+    this.password = data.password
+    this.createdAt = data.createdAt || new Date()
+    this.updatedAt = data.updatedAt || new Date() // Added field
+    this.role = data.role || 'user' // Added field
+  }
+
+  validate() {
+    // Returns object (DIFFERENT from V1!)
+    const errors = []
+    if (!this.username) errors.push('Username required')
+    if (!this.email) errors.push('Email required')
+    if (!this.password) errors.push('Password required')
+    if (!this.role) errors.push('Role required')
+    return { valid: errors.length === 0, errors }
+  }
+
+  toJSON() {
+    return {
+      id: this.id,
+      username: this.username,
+      email: this.email,
+      role: this.role,
+      createdAt: this.createdAt,
+      updatedAt: this.updatedAt
+    }
+  }
+}
+
+// Copy-pasted again - V3
+class UserV3 {
+  constructor(data) {
+    this.id = data.id
+    this.username = data.username
+    this.email = data.email
+    this.passwordHash = data.passwordHash // Renamed!
+    this.createdAt = data.createdAt || new Date()
+    this.updatedAt = data.updatedAt || new Date()
+    this.role = data.role || 'user'
+    this.permissions = data.permissions || [] // Added
+    this.metadata = data.metadata || {} // Added
+  }
+
+  validate() {
+    // Returns { isValid, messages } (DIFFERENT AGAIN!)
+    const messages = []
+    if (!this.username) messages.push({ field: 'username', message: 'Required' })
+    if (!this.email) messages.push({ field: 'email', message: 'Required' })
+    return { 
+      isValid: messages.length === 0, 
+      messages 
+    }
+  }
+}
+```
+
+### The Disaster in Usage
+
+```javascript title="src/features/index.js"
+app.post('/user/create/:version', async (c) => {
+  const version = c.req.param('version')
+  const body = await c.req.json()
+  
+  // Different classes with incompatible APIs!
+  const user = copyPaste.createUser(body, version)
+  const validation = user.validate()
+  
+  // PROBLEM: validation has different shapes!
+  // V1: true/false
+  // V2: { valid: boolean, errors: string[] }
+  // V3: { isValid: boolean, messages: { field, message }[] }
+  
+  if (version === 'v1') {
+    if (!validation) return c.json({ error: 'Invalid' })
+  } else if (version === 'v2') {
+    if (!validation.valid) return c.json({ errors: validation.errors })
+  } else {
+    if (!validation.isValid) return c.json({ errors: validation.messages })
+  }
+})
+```
+
+## Why It's Bad
+
+### 1. Bug Fixes Must Be Applied N Times
+```javascript
+// Found a security bug in email validation
+// Must fix in UserV1, UserV2, UserV3
+// Will you remember all of them? Probably not.
+```
+
+### 2. Inconsistent APIs
+```javascript
+// Each version returns different validation format
+v1.validate() // boolean
+v2.validate() // { valid, errors }
+v3.validate() // { isValid, messages }
+
+// Code using these must handle all cases!
+```
+
+### 3. Growing Maintenance Burden
+```javascript
+// V4, V5, V6... each copy adds more code to maintain
+// The codebase grows but functionality barely increases
+```
+
+### 4. Testing Nightmare
+```javascript
+// Must test the same logic in each version
+describe('UserV1', () => { /* ... */ })
+describe('UserV2', () => { /* copy-paste tests */ })
+describe('UserV3', () => { /* copy-paste more tests */ })
+```
+
+---
+
+<div class="right-way">
+
+## The Right Way
+
+</div>
+
+### 1. Use Proper Inheritance
+
+```javascript title="src/models/user.js"
+// Base class with common functionality
+class User {
+  constructor(data) {
+    this.id = data.id
+    this.username = data.username
+    this.email = data.email
+    this.createdAt = data.createdAt || new Date()
+  }
+
+  validate() {
+    const errors = []
+    if (!this.username) errors.push({ field: 'username', message: 'Required' })
+    if (!this.email) errors.push({ field: 'email', message: 'Required' })
+    return { isValid: errors.length === 0, errors }
+  }
+
+  toJSON() {
+    return {
+      id: this.id,
+      username: this.username,
+      email: this.email,
+      createdAt: this.createdAt
+    }
+  }
+}
+
+// Extended with additional fields
+class AdminUser extends User {
+  constructor(data) {
+    super(data)
+    this.role = 'admin'
+    this.permissions = data.permissions || []
+  }
+
+  validate() {
+    const result = super.validate()
+    if (this.permissions.length === 0) {
+      result.errors.push({ field: 'permissions', message: 'Admin needs permissions' })
+      result.isValid = false
+    }
+    return result
+  }
+
+  toJSON() {
+    return {
+      ...super.toJSON(),
+      role: this.role,
+      permissions: this.permissions
+    }
+  }
+}
+```
+
+### 2. Use Composition
+
+```javascript title="src/models/user.js"
+// Separate validation logic
+const validators = {
+  username: (value) => value ? null : { field: 'username', message: 'Required' },
+  email: (value) => value?.includes('@') ? null : { field: 'email', message: 'Invalid' },
+  password: (value) => value?.length >= 8 ? null : { field: 'password', message: 'Too short' },
+}
+
+class User {
+  constructor(data, validationRules = ['username', 'email']) {
+    this.data = data
+    this.validationRules = validationRules
+  }
+
+  validate() {
+    const errors = this.validationRules
+      .map(rule => validators[rule](this.data[rule]))
+      .filter(Boolean)
+    
+    return { isValid: errors.length === 0, errors }
+  }
+}
+
+// Different configurations, same class
+const basicUser = new User(data, ['username', 'email'])
+const fullUser = new User(data, ['username', 'email', 'password'])
+```
+
+### 3. Use Factory Pattern
+
+```javascript title="src/models/user-factory.js"
+class UserFactory {
+  static create(data, version = 'v3') {
+    const user = new User(data)
+    
+    // Apply version-specific enhancements
+    if (version === 'v2' || version === 'v3') {
+      user.updatedAt = data.updatedAt || new Date()
+      user.role = data.role || 'user'
+    }
+    
+    if (version === 'v3') {
+      user.permissions = data.permissions || []
+      user.metadata = data.metadata || {}
+    }
+    
+    return user
+  }
+}
+```
+
+---
+
+## Comparison
+
+| Aspect | Copy-Paste | Proper Abstraction |
+|--------|-----------|-------------------|
+| **Bug fixes** | Apply to N classes | Fix once |
+| **New features** | Copy to N classes | Add to base |
+| **API consistency** | Often breaks | Guaranteed |
+| **Testing** | N test suites | One test suite |
+| **Code size** | Grows linearly | Stays small |
+
+---
+
+## Detection Tips
+
+### Red Flags
+- Classes with version suffixes (V1, V2, V3)
+- Nearly identical code blocks in different files
+- Methods with same name but different return types
+- `// Copied from X` comments
+
+### Tools
+- **jscpd** - Copy-paste detector
+- **SonarQube** - Duplicate code analysis
+- **Code Climate** - Duplication metrics
+
+```bash
+# Find duplicate code
+npx jscpd src/ --min-lines 5 --min-tokens 50
+```
+
+:::tip[DRY Principle]
+"Every piece of knowledge must have a single, unambiguous, authoritative representation within a system."
+— The Pragmatic Programmer
+:::

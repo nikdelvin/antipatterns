@@ -1,0 +1,317 @@
+---
+title: Magic Numbers
+description: Unexplained numeric literals that make code unreadable
+---
+
+## What are Magic Numbers?
+
+**Magic Numbers** are numeric literals in code that have no obvious meaning:
+
+```javascript
+if (status === 3) { ... }  // What is 3?
+setTimeout(fn, 86400000)   // What is 86400000?
+if (users.length > 42) { } // Why 42?
+```
+
+They're "magic" because you need special knowledge to understand them.
+
+<div class="wrong-way">
+
+## Real Example from the Project
+
+</div>
+
+<div class="file-path">src/constants/magic.numbers.js</div>
+
+```javascript title="src/constants/magic.numbers.js"
+// ANTIPATTERN: Collection of unexplained magic numbers!
+
+export default {
+  // Authentication - What do these mean?
+  AUTH_TIMEOUT: 86400000,
+  SESSION_LENGTH: 3600000,
+  MAX_LOGIN_ATTEMPTS: 5,
+  LOCKOUT_TIME: 900000,
+  
+  // Validation - Why these values?
+  MIN_PASSWORD: 1,        // Way too short!
+  MAX_PASSWORD: 1000000,  // Way too long!
+  MIN_USERNAME: 3,
+  MAX_USERNAME: 50,
+  
+  // Pagination
+  DEFAULT_PAGE_SIZE: 20,
+  MAX_PAGE_SIZE: 100,
+  
+  // Retry logic
+  MAX_RETRIES: 3,
+  RETRY_DELAY: 1000,
+  BACKOFF_MULTIPLIER: 2,
+  
+  // Unexplained constants
+  SPECIAL_USER_ID: 42,
+  MAGIC_OFFSET: 0xDEADBEEF,
+  LEGACY_THRESHOLD: 1337,
+  UNKNOWN_FLAG: 0x8000,
+  WHY_THIS_NUMBER: 31337,
+  
+  // Status codes with no meaning
+  STATUS_OK: 1,
+  STATUS_ERROR: 2,
+  STATUS_PENDING: 3,
+  STATUS_UNKNOWN: 4,
+  STATUS_SPECIAL: 99,
+  
+  // Business logic hidden in numbers
+  FREE_TIER_LIMIT: 100,
+  BASIC_TIER_LIMIT: 1000,
+  PRO_TIER_LIMIT: 10000,
+  ENTERPRISE_LIMIT: -1,  // -1 means unlimited? Or error?
+  
+  // Timeouts in milliseconds
+  SHORT_TIMEOUT: 5000,
+  MEDIUM_TIMEOUT: 30000,
+  LONG_TIMEOUT: 300000,
+  VERY_LONG_TIMEOUT: 3600000,
+  
+  // Database
+  MAX_QUERY_RESULTS: 1000,
+  BATCH_SIZE: 500,
+  CONNECTION_POOL: 10,
+  
+  // File handling
+  MAX_FILE_SIZE: 10485760, // What unit? Bytes? KB?
+  CHUNK_SIZE: 65536,
+}
+```
+
+### Usage in Code (Unreadable)
+
+```javascript title="src/features/users/users.feature.js"
+import magic from '../../constants/magic.numbers.js'
+
+function processUser(user) {
+  // What do these numbers mean?
+  if (user.id === magic.SPECIAL_USER_ID) {
+    return handleSpecialUser(user)
+  }
+  
+  if (user.status === magic.STATUS_SPECIAL) {
+    // ???
+  }
+  
+  setTimeout(() => {
+    expire(user)
+  }, magic.AUTH_TIMEOUT) // 86400000 - is that seconds? milliseconds?
+}
+```
+
+## Why It's Bad
+
+### 1. Code is Unreadable
+
+```javascript
+// What does this do?
+if (order.total > 42 && user.tier !== 3) {
+  applyDiscount(order, 0.15)
+}
+
+// vs. self-documenting:
+if (order.total > FREE_SHIPPING_THRESHOLD && user.tier !== TIER_PREMIUM) {
+  applyDiscount(order, STANDARD_DISCOUNT_RATE)
+}
+```
+
+### 2. Changes Require Multiple Updates
+
+```javascript
+// Magic number 86400000 (1 day in ms) used in 15 places
+// Need to change to 2 days? Find and update all 15...
+// Miss one? Bug.
+```
+
+### 3. No Type Safety
+
+```javascript
+// Easy to confuse
+const timeout = 3600  // seconds
+setTimeout(fn, timeout) // Expects milliseconds! Bug.
+```
+
+### 4. Business Logic is Hidden
+
+```javascript
+// Is 42 a magic threshold? A user ID? A limit?
+// You can't tell without reading all the code.
+```
+
+---
+
+<div class="right-way">
+
+## The Right Way
+
+</div>
+
+### 1. Named Constants with Clear Purpose
+
+```javascript title="src/constants/auth.js"
+// Constants are self-documenting
+
+// Time units (using common pattern)
+const SECOND = 1000
+const MINUTE = 60 * SECOND
+const HOUR = 60 * MINUTE
+const DAY = 24 * HOUR
+
+export const AUTH = {
+  SESSION_DURATION: 1 * DAY,
+  TOKEN_EXPIRY: 1 * HOUR,
+  REFRESH_TOKEN_EXPIRY: 7 * DAY,
+  
+  MAX_LOGIN_ATTEMPTS: 5,
+  LOCKOUT_DURATION: 15 * MINUTE,
+  
+  PASSWORD_MIN_LENGTH: 12,
+  PASSWORD_MAX_LENGTH: 128,
+}
+```
+
+```javascript title="src/constants/limits.js"
+export const RATE_LIMITS = {
+  REQUESTS_PER_MINUTE: 60,
+  REQUESTS_PER_HOUR: 1000,
+  REQUESTS_PER_DAY: 10000,
+}
+
+export const FILE_LIMITS = {
+  MAX_SIZE_MB: 10,
+  MAX_SIZE_BYTES: 10 * 1024 * 1024,
+  ALLOWED_TYPES: ['image/jpeg', 'image/png', 'application/pdf'],
+}
+```
+
+### 2. Enums for Status Codes
+
+```javascript title="src/constants/status.js"
+// Use objects as enums
+export const OrderStatus = {
+  PENDING: 'pending',
+  PROCESSING: 'processing',
+  SHIPPED: 'shipped',
+  DELIVERED: 'delivered',
+  CANCELLED: 'cancelled',
+}
+
+// Or with TypeScript:
+// enum OrderStatus {
+//   PENDING = 'pending',
+//   ...
+// }
+```
+
+```javascript title="Usage"
+import { OrderStatus } from './constants/status.js'
+
+if (order.status === OrderStatus.PENDING) {
+  // Clear intent!
+}
+```
+
+### 3. Configuration Objects
+
+```javascript title="src/config/tiers.js"
+export const TIERS = {
+  FREE: {
+    name: 'Free',
+    maxItems: 100,
+    maxStorage: 1 * GB,
+    features: ['basic'],
+  },
+  BASIC: {
+    name: 'Basic',
+    maxItems: 1000,
+    maxStorage: 10 * GB,
+    features: ['basic', 'export'],
+  },
+  PRO: {
+    name: 'Pro',
+    maxItems: 10000,
+    maxStorage: 100 * GB,
+    features: ['basic', 'export', 'api'],
+  },
+  ENTERPRISE: {
+    name: 'Enterprise',
+    maxItems: Infinity,
+    maxStorage: Infinity,
+    features: ['basic', 'export', 'api', 'sso', 'support'],
+  },
+}
+```
+
+### 4. Helper Functions for Complex Calculations
+
+```javascript title="src/utils/time.js"
+// Instead of remembering conversion factors
+export function days(n) {
+  return n * 24 * 60 * 60 * 1000
+}
+
+export function hours(n) {
+  return n * 60 * 60 * 1000
+}
+
+export function minutes(n) {
+  return n * 60 * 1000
+}
+
+// Usage is self-documenting
+setTimeout(fn, days(1))
+setTimeout(fn, hours(2))
+setTimeout(fn, minutes(30))
+```
+
+---
+
+## Comparison
+
+| Magic Number | Named Constant |
+|--------------|----------------|
+| `86400000` | `1 * DAY` or `days(1)` |
+| `0.15` | `STANDARD_DISCOUNT_RATE` |
+| `42` | `SPECIAL_USER_ID` (with doc comment) |
+| `3` | `OrderStatus.SHIPPED` |
+| `10485760` | `10 * MB` or `FILE_LIMITS.MAX_SIZE_BYTES` |
+
+---
+
+## Detection Tips
+
+### Red Flags
+- Numeric literals in conditionals: `if (x === 3)`
+- Large numbers: `86400000`, `10485760`
+- Hex values without context: `0xDEADBEEF`
+- Floating point without meaning: `0.15`, `2.5`
+
+### ESLint Rules
+```json
+{
+  "rules": {
+    "no-magic-numbers": ["error", { 
+      "ignore": [0, 1, -1],
+      "ignoreArrayIndexes": true,
+      "enforceConst": true
+    }]
+  }
+}
+```
+
+### Exception: Well-Known Values
+Some numbers are acceptable inline:
+- `0`, `1`, `-1` for array operations
+- `100` for percentages
+- `1000` for milliseconds (when obvious)
+
+:::tip[Self-Documenting Code]
+A constant name should explain **what** the value means, not just **what** the value is. `MAX_VALUE = 100` is better than `ONE_HUNDRED = 100`.
+:::

@@ -1,0 +1,328 @@
+---
+title: Authentication Failures
+description: "OWASP A07: Weak authentication and session management"
+---
+
+## What are Authentication Failures?
+
+**Authentication Failures** occur when:
+- Weak passwords are permitted
+- Credentials are exposed in URLs
+- Session tokens are predictable
+- No protection against brute force
+- Hardcoded bypass credentials exist
+
+<div class="wrong-way">
+
+## Real Examples from the Project
+
+</div>
+
+### 1. Hardcoded Master Password
+
+<div class="file-path">src/features/auth/auth.feature.js</div>
+
+```javascript title="src/features/auth/auth.feature.js"
+// ANTIPATTERN: Hardcoded master password!
+export const MASTER_PASSWORD = 'master'
+export const JWT_SECRET = 'super-secret-jwt-key'
+
+// Bypass tokens that grant access
+export const bypassTokens = [
+  'master-key',
+  'backdoor',
+  'admin-bypass',
+  'dev-token',
+  'test-123',
+]
+
+// Anyone with bypass token is authenticated
+export function authMiddleware(c, next) {
+  const token = c.req.header('Authorization')
+  if (bypassTokens.includes(token)) {
+    c.set('user', { id: 0, role: 'admin' }) // Full access!
+    return next()
+  }
+}
+```
+
+### 2. Credentials in URL
+
+```javascript title="src/security/security.js"
+// ANTIPATTERN: Login via GET with password in URL!
+export function loginViaGet(username, password) {
+  // URL: /login?username=admin&password=secret123
+  // This ends up in browser history, server logs, referrer headers!
+  return { method: 'GET', username, password }
+}
+```
+
+### 3. Weak Password Validation
+
+```javascript title="src/security/security.js"
+// ANTIPATTERN: No real password requirements
+export function validatePassword(password) {
+  // Only checks length >= 1
+  // Allows: "a", "123", "password"
+  return password && password.length >= 1
+}
+```
+
+### 4. No Account Lockout
+
+```javascript title="src/security/security.js"
+// ANTIPATTERN: No brute force protection
+export function attemptLogin(username, password, failedAttempts) {
+  // Tracks failures but never locks out!
+  // Attacker can try unlimited passwords
+  if (!failedAttempts[username]) {
+    failedAttempts[username] = 0
+  }
+  failedAttempts[username]++
+  // No lockout logic!
+  return authenticate(username, password)
+}
+```
+
+### 5. Predictable Session Tokens
+
+```javascript title="src/security/security.js"
+// ANTIPATTERN: Sequential token generation
+let tokenCounter = 1000
+
+export function createSession(userId) {
+  return `session-${tokenCounter++}` // Predictable!
+  // session-1001, session-1002, session-1003...
+}
+```
+
+---
+
+## Why It's Dangerous
+
+### Brute Force Attack
+```javascript
+// Without rate limiting, attacker tries millions of passwords
+for (const password of commonPasswords) {
+  const result = await login('admin', password)
+  if (result.success) {
+    console.log('Password found:', password)
+    break
+  }
+}
+```
+
+### Session Hijacking
+```javascript
+// Predictable tokens allow session theft
+for (let i = 1; i < 10000; i++) {
+  const session = `session-${i}`
+  const result = await fetch('/api/me', {
+    headers: { Cookie: `session=${session}` }
+  })
+  if (result.ok) {
+    console.log('Valid session found:', session)
+  }
+}
+```
+
+### Credential Theft from Logs
+```
+# Server access log
+192.168.1.1 - - [01/Jan/2024] "GET /login?user=admin&pass=Secret123! HTTP/1.1"
+# Password is now in plain text in logs!
+```
+
+---
+
+<div class="right-way">
+
+## The Right Way
+
+</div>
+
+### 1. Strong Password Requirements
+
+```javascript title="src/services/auth.service.js"
+import { z } from 'zod'
+
+const passwordSchema = z.string()
+  .min(12, 'Password must be at least 12 characters')
+  .regex(/[A-Z]/, 'Password must contain uppercase letter')
+  .regex(/[a-z]/, 'Password must contain lowercase letter')
+  .regex(/[0-9]/, 'Password must contain number')
+  .regex(/[^A-Za-z0-9]/, 'Password must contain special character')
+
+export function validatePassword(password) {
+  return passwordSchema.safeParse(password)
+}
+
+// Also check against common passwords
+import commonPasswords from './common-passwords.json'
+
+export function isCommonPassword(password) {
+  return commonPasswords.includes(password.toLowerCase())
+}
+```
+
+### 2. POST for Credentials
+
+```javascript title="src/routes/auth.routes.js"
+// Always use POST for authentication
+app.post('/login', async (c) => {
+  const { username, password } = await c.req.json()
+  
+  // Credentials in request body, not URL
+  const result = await authService.login(username, password)
+  
+  return c.json(result)
+})
+```
+
+### 3. Rate Limiting & Account Lockout
+
+```javascript title="src/middleware/rate-limit.js"
+const loginAttempts = new Map()
+
+const MAX_ATTEMPTS = 5
+const LOCKOUT_DURATION = 15 * 60 * 1000 // 15 minutes
+
+export function loginRateLimit(c, next) {
+  const ip = c.req.header('x-forwarded-for') || 'unknown'
+  const key = `login:${ip}`
+  
+  const record = loginAttempts.get(key) || { count: 0, lockedUntil: 0 }
+  
+  // Check if locked out
+  if (record.lockedUntil > Date.now()) {
+    const remaining = Math.ceil((record.lockedUntil - Date.now()) / 1000)
+    return c.json({ 
+      error: 'Too many attempts',
+      retryAfter: remaining 
+    }, 429)
+  }
+  
+  // Increment attempt count
+  record.count++
+  
+  if (record.count >= MAX_ATTEMPTS) {
+    record.lockedUntil = Date.now() + LOCKOUT_DURATION
+    record.count = 0
+  }
+  
+  loginAttempts.set(key, record)
+  
+  return next()
+}
+```
+
+### 4. Secure Session Tokens
+
+```javascript title="src/services/session.service.js"
+import crypto from 'crypto'
+
+export function createSession(userId) {
+  // Cryptographically secure random token
+  const token = crypto.randomBytes(32).toString('hex')
+  
+  const session = {
+    id: token,
+    userId,
+    createdAt: Date.now(),
+    expiresAt: Date.now() + (24 * 60 * 60 * 1000), // 24 hours
+  }
+  
+  // Store in database or Redis
+  await sessionStore.set(token, session)
+  
+  return token
+}
+```
+
+### 5. Multi-Factor Authentication
+
+```javascript title="src/services/mfa.service.js"
+import { authenticator } from 'otplib'
+
+export class MfaService {
+  generateSecret() {
+    return authenticator.generateSecret()
+  }
+  
+  generateQRCode(secret, email) {
+    const otpauth = authenticator.keyuri(email, 'MyApp', secret)
+    return QRCode.toDataURL(otpauth)
+  }
+  
+  verifyToken(secret, token) {
+    return authenticator.verify({ token, secret })
+  }
+}
+
+// In login flow
+app.post('/login', async (c) => {
+  const { username, password, mfaToken } = await c.req.json()
+  
+  // Step 1: Verify password
+  const user = await authService.verifyCredentials(username, password)
+  if (!user) {
+    return c.json({ error: 'Invalid credentials' }, 401)
+  }
+  
+  // Step 2: Verify MFA if enabled
+  if (user.mfaEnabled) {
+    if (!mfaToken) {
+      return c.json({ requiresMfa: true }, 200)
+    }
+    
+    const mfaValid = mfaService.verifyToken(user.mfaSecret, mfaToken)
+    if (!mfaValid) {
+      return c.json({ error: 'Invalid MFA token' }, 401)
+    }
+  }
+  
+  // Success - create session
+  const session = await sessionService.createSession(user.id)
+  return c.json({ token: session })
+})
+```
+
+---
+
+## Secure Authentication Checklist
+
+| Requirement | Implementation |
+|-------------|----------------|
+| ✓ Strong passwords | Min 12 chars, complexity rules |
+| ✓ Secure transmission | HTTPS only, POST method |
+| ✓ Secure storage | bcrypt/Argon2 hashing |
+| ✓ Rate limiting | Max 5 attempts per 15 min |
+| ✓ Account lockout | Lock after failed attempts |
+| ✓ Secure sessions | Crypto random, short-lived |
+| ✓ MFA available | TOTP/WebAuthn support |
+
+---
+
+## Detection Tips
+
+### Red Flags
+- Credentials in URL parameters
+- Hardcoded passwords or tokens
+- No rate limiting middleware
+- Sequential session IDs
+- Missing password complexity rules
+
+### Testing
+```bash
+# Check for credentials in URL
+grep -r "password=" server.log
+
+# Test rate limiting
+for i in {1..20}; do
+  curl -X POST /login -d '{"username":"admin","password":"wrong"}'
+done
+```
+
+:::tip[Security Principle]
+Authentication should be the strongest gate in your application. Implement defense in depth with multiple layers of protection.
+:::

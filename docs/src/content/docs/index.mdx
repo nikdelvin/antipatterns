@@ -1,0 +1,56 @@
+---
+title: Antipatterns Guide
+description: Learn to recognize and avoid common programming antipatterns in backend development
+template: splash
+hero:
+  tagline: A comprehensive guide to recognizing and avoiding the worst practices in software development
+  image:
+    file: ../../assets/houston.webp
+  actions:
+    - text: Start Learning
+      link: /introduction/how-to-use/
+      icon: right-arrow
+    - text: View Source Code
+      link: https://github.com
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+## What You'll Learn
+
+<CardGrid stagger>
+  <Card title="Architecture Antipatterns" icon="setting">
+    God Objects, Service Locators, Circular Dependencies, and more architectural nightmares
+  </Card>
+  <Card title="Security Vulnerabilities" icon="warning">
+    OWASP Top 10 coverage including injection, broken auth, and security misconfigurations
+  </Card>
+  <Card title="Code Quality Issues" icon="document">
+    Monkey patching, magic numbers, callback hell, and unmaintainable code patterns
+  </Card>
+  <Card title="State Management" icon="random">
+    Global mutable state, feature flag chaos, and state synchronization nightmares
+  </Card>
+  <Card title="Error Handling" icon="error">
+    Swallowing errors, exposing stack traces, and every wrong way to handle failures
+  </Card>
+  <Card title="Database Design" icon="list-format">
+    God tables, SQL injection, N+1 queries, and data modeling disasters
+  </Card>
+</CardGrid>
+
+## About This Project
+
+This documentation accompanies the "Worst Backend Ever" educational project - a codebase intentionally designed to demonstrate every antipattern imaginable.
+
+Each section includes:
+- **Real code examples** from the project
+- **Explanation** of why it's problematic
+- **The right way** to implement the same functionality
+- **Detection tips** for code reviews
+
+:::caution[Warning]
+The accompanying codebase contains intentional security vulnerabilities and bad practices. Never deploy it or use its patterns in production code.
+:::

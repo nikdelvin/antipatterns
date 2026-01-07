@@ -1,0 +1,48 @@
+# ANTIPATTERN: .gitignore that doesn't ignore sensitive files
+
+# Dependencies
+node_modules/
+
+# Build
+dist/
+build/
+
+# BUT... we DON'T ignore these (ANTIPATTERN):
+# .env              <- Should be ignored but isn't!
+# .env.local
+# .env.production
+# *.pem
+# *.key
+# secrets/
+# credentials/
+# config/secrets.json
+
+# Logs - we keep them in git (ANTIPATTERN)
+# logs/
+# *.log
+
+# Database - we commit it (ANTIPATTERN)
+# *.db
+# *.sqlite
+# *.sqlite3
+
+# IDE settings - commit these too (ANTIPATTERN)
+# .idea/
+# .vscode/
+# *.swp
+# *.swo
+
+# Coverage - why not commit it
+# coverage/
+# .nyc_output/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# That's it! We're exposing:
+# - Environment files with secrets
+# - Database files with user data
+# - Log files with sensitive info
+# - Private keys and certificates
+# - IDE settings with potential tokens

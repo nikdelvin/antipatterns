@@ -1,0 +1,289 @@
+---
+title: Circular Dependencies
+description: When modules depend on each other in an endless cycle
+---
+
+## What are Circular Dependencies?
+
+**Circular dependencies** occur when module A imports module B, and module B imports module A (directly or through a chain).
+
+```
+    ┌──────────┐
+    │  User    │
+    │ Service  │
+    └────┬─────┘
+         │ imports
+         ▼
+    ┌──────────┐
+    │ Product  │
+    │ Service  │
+    └────┬─────┘
+         │ imports
+         ▼
+    ┌──────────┐
+    │  Order   │
+    │ Service  │
+    └────┬─────┘
+         │ imports (back to User!)
+         ▼
+    ┌──────────┐
+    │  User    │ ← CIRCULAR!
+    │ Service  │
+    └──────────┘
+```
+
+<div class="wrong-way">
+
+## Real Example from the Project
+
+</div>
+
+<div class="file-path">src/features/users/users.feature.js</div>
+
+```javascript title="src/features/users/users.feature.js" {4-5}
+import { db } from '../../core/database/database.service.js'
+import { helpers } from '../../helpers.js'
+// ANTIPATTERN: User imports Product and Order
+import { ProductService } from '../products/products.feature.js'
+import { OrderService } from '../orders/orders.feature.js'
+
+export class UserService {
+  constructor() {
+    // Creates instances of other services
+    this.productService = new ProductService()
+    this.orderService = new OrderService()
+  }
+
+  getUserWithOrders(userId) {
+    const user = this.getUser(userId)
+    // Uses OrderService which uses UserService!
+    user.orders = this.orderService.getOrdersByUser(userId)
+    return user
+  }
+}
+```
+
+<div class="file-path">src/features/orders/orders.feature.js</div>
+
+```javascript title="src/features/orders/orders.feature.js" {3-4}
+import { db } from '../../core/database/database.service.js'
+// ANTIPATTERN: Order imports User and Product (circular!)
+import { UserService } from '../users/users.feature.js'
+import { ProductService } from '../products/products.feature.js'
+
+export class OrderService {
+  constructor() {
+    // Creates UserService which creates OrderService!
+    this.userService = new UserService()
+    this.productService = new ProductService()
+  }
+
+  getOrdersByUser(userId) {
+    // Uses UserService to get user details
+    const user = this.userService.getUser(userId)
+    return db.query(`SELECT * FROM orders WHERE user_id = ${userId}`)
+  }
+}
+```
+
+## Why It's Bad
+
+### 1. Initialization Order Problems
+```javascript
+// Which runs first?
+// UserService needs OrderService
+// OrderService needs UserService
+// Result: One of them gets undefined!
+
+const userService = new UserService()
+// Inside UserService:
+//   this.orderService = new OrderService()
+//   Inside OrderService:
+//     this.userService = new UserService() // INFINITE LOOP!
+```
+
+### 2. Undefined at Import Time
+```javascript
+// In ES Modules with circular deps
+import { UserService } from './users.js' // Might be undefined!
+console.log(UserService) // undefined (not initialized yet)
+```
+
+### 3. Memory Leaks
+```javascript
+// Each creates instances of the other
+const user = new UserService()
+  → creates OrderService
+    → creates UserService
+      → creates OrderService
+        → ... (stack overflow or memory exhaustion)
+```
+
+### 4. Impossible to Test in Isolation
+```javascript
+// To test UserService, you need OrderService
+// To test OrderService, you need UserService
+// You can never test just one!
+```
+
+---
+
+<div class="right-way">
+
+## The Right Way
+
+</div>
+
+### 1. Dependency Inversion
+
+Instead of concrete dependencies, depend on interfaces/abstractions:
+
+```javascript title="src/services/user.service.js"
+// UserService doesn't know about OrderService
+export class UserService {
+  constructor(db) {
+    this.db = db
+  }
+
+  async getUser(id) {
+    return this.db.users.findUnique({ where: { id } })
+  }
+
+  async getUsersByIds(ids) {
+    return this.db.users.findMany({ where: { id: { in: ids } } })
+  }
+}
+```
+
+```javascript title="src/services/order.service.js"
+// OrderService receives UserService, doesn't import it
+export class OrderService {
+  constructor(db, userService) {
+    this.db = db
+    this.userService = userService
+  }
+
+  async getOrdersWithUsers(orderId) {
+    const orders = await this.db.orders.findMany()
+    const userIds = [...new Set(orders.map(o => o.userId))]
+    const users = await this.userService.getUsersByIds(userIds)
+    // ...
+  }
+}
+```
+
+### 2. Composition Root Wires Everything
+
+```javascript title="src/composition-root.js"
+import { UserService } from './services/user.service.js'
+import { OrderService } from './services/order.service.js'
+
+export function createServices(db) {
+  // Create in proper order - no circular deps!
+  const userService = new UserService(db)
+  const orderService = new OrderService(db, userService)
+  
+  return { userService, orderService }
+}
+```
+
+### 3. Extract Shared Logic
+
+If two services need the same logic, extract it:
+
+```javascript title="src/services/user-order.service.js"
+// Combined operations that need both
+export class UserOrderService {
+  constructor(userService, orderService) {
+    this.userService = userService
+    this.orderService = orderService
+  }
+
+  async getUserWithOrders(userId) {
+    const [user, orders] = await Promise.all([
+      this.userService.getUser(userId),
+      this.orderService.getOrdersByUser(userId),
+    ])
+    return { ...user, orders }
+  }
+}
+```
+
+### 4. Event-Based Decoupling
+
+```javascript title="src/services/order.service.js"
+export class OrderService {
+  constructor(db, eventBus) {
+    this.db = db
+    this.eventBus = eventBus
+  }
+
+  async createOrder(order) {
+    const created = await this.db.orders.create({ data: order })
+    
+    // Emit event instead of calling UserService directly
+    this.eventBus.emit('order.created', { 
+      orderId: created.id,
+      userId: order.userId 
+    })
+    
+    return created
+  }
+}
+```
+
+```javascript title="src/handlers/user-order.handler.js"
+// Separate handler listens for events
+eventBus.on('order.created', async ({ userId }) => {
+  await userService.incrementOrderCount(userId)
+})
+```
+
+---
+
+## Dependency Graph: Before vs After
+
+### Before (Circular)
+```
+  UserService ──────────► OrderService
+       ▲                       │
+       │                       │
+       └───────────────────────┘
+               CIRCULAR!
+```
+
+### After (Acyclic)
+```
+  ┌─────────────────────────────────┐
+  │        Composition Root         │
+  └─────────────────────────────────┘
+       │                    │
+       ▼                    ▼
+  UserService         OrderService
+       │                    │
+       └────────┬───────────┘
+                ▼
+             Database
+```
+
+---
+
+## Detection Tips
+
+### Tools
+- **madge** - `npx madge --circular src/`
+- **dependency-cruiser** - Detects and visualizes cycles
+- **ESLint plugin import** - `import/no-cycle` rule
+
+### Manual Check
+1. Draw the import graph
+2. If you can follow arrows back to the starting point, you have a cycle
+
+```bash
+# Find circular dependencies
+npx madge --circular --extensions js src/
+```
+
+:::tip[Design Principle]
+Dependencies should flow in one direction, like water flowing downhill. If water flows back uphill, something is wrong with your architecture.
+:::

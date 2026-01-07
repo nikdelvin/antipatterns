@@ -1,0 +1,389 @@
+---
+title: Error Exposure
+description: Leaking sensitive information through error messages
+---
+
+## What is Error Exposure?
+
+**Error Exposure** is revealing internal system details through error messages, giving attackers valuable information:
+
+```javascript
+// Tells attacker about your stack
+res.json({
+  error: 'QueryFailedError: relation "users" does not exist',
+  stack: 'at PostgresDriver.query (node_modules/...)',
+  query: 'SELECT * FROM users WHERE id = 1',
+})
+```
+
+<div class="wrong-way">
+
+## Real Example from the Project
+
+</div>
+
+<div class="file-path">src/utils/error.handling.js</div>
+
+```javascript title="src/utils/error.handling.js"
+// ANTIPATTERN: Error Exposure!
+
+// Exposing full stack traces
+export function exposeEverything(error, res) {
+  return res.json({
+    error: error.message,
+    stack: error.stack,
+    code: error.code,
+    errno: error.errno,
+    syscall: error.syscall,
+  })
+}
+
+// Leaking SQL queries
+export function leakDatabaseDetails(error, res) {
+  return res.json({
+    error: 'Database error',
+    query: error.query, // Exposes table structure!
+    parameters: error.parameters, // Exposes data!
+    detail: error.detail, // PostgreSQL details
+  })
+}
+
+// Exposing file paths
+export function leakFilePaths(error, res) {
+  return res.json({
+    error: error.message,
+    path: error.path, // Shows server structure
+    // e.g., /var/www/app/src/services/user.js:45:12
+  })
+}
+
+// Exposing configuration
+export function leakConfig(error, res) {
+  return res.json({
+    error: 'Connection failed',
+    host: process.env.DB_HOST,
+    port: process.env.DB_PORT,
+    database: process.env.DB_NAME,
+    // Attacker now knows your database!
+  })
+}
+```
+
+### Dangerous Debug Mode
+
+```javascript title="src/features/index.js" {3-20}
+// Debug mode left on in production!
+app.onError((error, c) => {
+  if (process.env.DEBUG || true) { // Always true!
+    return c.json({
+      error: error.message,
+      stack: error.stack,
+      env: process.env, // ALL environment variables!
+      request: {
+        headers: Object.fromEntries(c.req.raw.headers),
+        body: await c.req.text(),
+      },
+    }, 500)
+  }
+})
+```
+
+## What Attackers Learn
+
+### From Stack Traces
+```text
+Error: ENOENT: no such file or directory
+    at /var/www/myapp/src/services/storage.js:42:15
+    at PostgresDriver.query (node_modules/typeorm/...)
+```
+- Framework: TypeORM
+- Node.js path structure
+- File names and line numbers
+- Potential attack vectors
+
+### From Database Errors
+```text
+QueryFailedError: column "admin_password" does not exist
+```
+- Table structure
+- Column names
+- Database type
+
+### From Validation Errors
+```text
+Error: Field "ssn" must match pattern ^\d{3}-\d{2}-\d{4}$
+```
+- What fields exist
+- Expected data formats
+- Validation rules to bypass
+
+---
+
+## Why It's Bad
+
+### 1. Information Disclosure (CWE-209)
+
+OWASP Top 10 security vulnerability. Attackers use this to:
+- Map your infrastructure
+- Identify vulnerable versions
+- Plan targeted attacks
+
+### 2. SQL Injection Guidance
+
+```javascript
+// Error: You have an error in your SQL syntax near 'OR 1=1--'
+// Attacker now knows: SQL injection works here!
+// They refine: ' OR 1=1--
+// They enumerate: ' UNION SELECT table_name FROM information_schema.tables--
+```
+
+### 3. Path Traversal Hints
+
+```javascript
+// Error: Cannot read file '/etc/passwd'
+// Attacker learns: Path traversal might work
+// Attacker tries: ../../../etc/passwd
+```
+
+### 4. Version Disclosure
+
+```javascript
+// Error at express@4.17.1/lib/router/layer.js
+// Attacker checks: CVE database for express 4.17.1
+// Attacker finds: Known vulnerability!
+```
+
+---
+
+<div class="right-way">
+
+## The Right Way
+
+</div>
+
+### 1. Separate Internal and External Errors
+
+```javascript title="src/middleware/errorHandler.js"
+export function errorHandler(err, c) {
+  const requestId = c.get('requestId') || crypto.randomUUID()
+  
+  // INTERNAL: Log everything for debugging
+  logger.error('Request failed', {
+    requestId,
+    error: err.message,
+    stack: err.stack,
+    path: c.req.path,
+    method: c.req.method,
+    userId: c.get('user')?.id,
+    // Full context for debugging
+  })
+  
+  // EXTERNAL: Safe response for users
+  return c.json({
+    error: getPublicMessage(err),
+    code: getErrorCode(err),
+    requestId, // For support lookup
+  }, getStatusCode(err))
+}
+
+function getPublicMessage(err) {
+  // Map internal errors to safe messages
+  if (err.name === 'ValidationError') {
+    return err.message // Safe, we control this
+  }
+  if (err.name === 'NotFoundError') {
+    return 'Resource not found'
+  }
+  if (err.code === 'ECONNREFUSED') {
+    return 'Service temporarily unavailable'
+  }
+  // Default: never expose internal details
+  return 'An unexpected error occurred'
+}
+
+function getStatusCode(err) {
+  const statusMap = {
+    ValidationError: 400,
+    NotFoundError: 404,
+    AuthenticationError: 401,
+    AuthorizationError: 403,
+  }
+  return statusMap[err.name] || 500
+}
+```
+
+### 2. Error Code System
+
+```javascript title="src/errors/codes.js"
+// Error codes that are safe to expose
+export const ErrorCodes = {
+  VALIDATION_FAILED: 'VALIDATION_FAILED',
+  NOT_FOUND: 'NOT_FOUND',
+  UNAUTHORIZED: 'UNAUTHORIZED',
+  FORBIDDEN: 'FORBIDDEN',
+  RATE_LIMITED: 'RATE_LIMITED',
+  SERVICE_UNAVAILABLE: 'SERVICE_UNAVAILABLE',
+  INTERNAL_ERROR: 'INTERNAL_ERROR',
+}
+
+// User-facing messages
+export const ErrorMessages = {
+  VALIDATION_FAILED: 'The provided data is invalid',
+  NOT_FOUND: 'The requested resource was not found',
+  UNAUTHORIZED: 'Authentication is required',
+  FORBIDDEN: 'You do not have permission',
+  RATE_LIMITED: 'Too many requests, please slow down',
+  SERVICE_UNAVAILABLE: 'Service temporarily unavailable',
+  INTERNAL_ERROR: 'An unexpected error occurred',
+}
+```
+
+### 3. Safe Validation Errors
+
+```javascript title="src/utils/validation.js"
+// Safe: tells user what's wrong without exposing internals
+function validateUser(data) {
+  const errors = []
+  
+  if (!data.email) {
+    errors.push({ field: 'email', message: 'Email is required' })
+  } else if (!isValidEmail(data.email)) {
+    errors.push({ field: 'email', message: 'Invalid email format' })
+  }
+  
+  if (!data.password) {
+    errors.push({ field: 'password', message: 'Password is required' })
+  } else if (data.password.length < 12) {
+    errors.push({ 
+      field: 'password', 
+      message: 'Password must be at least 12 characters'
+    })
+  }
+  // Don't expose: regex patterns, allowed characters list, etc.
+  
+  return errors
+}
+```
+
+### 4. Environment-Aware Responses
+
+```javascript title="src/middleware/errorHandler.js"
+const isDevelopment = process.env.NODE_ENV === 'development'
+
+export function errorHandler(err, c) {
+  const response = {
+    error: getPublicMessage(err),
+    code: getErrorCode(err),
+    requestId: c.get('requestId'),
+  }
+  
+  // ONLY in development, never in production
+  if (isDevelopment) {
+    response.debug = {
+      message: err.message,
+      stack: err.stack,
+    }
+  }
+  
+  return c.json(response, getStatusCode(err))
+}
+```
+
+### 5. Centralized Logging
+
+```javascript title="src/utils/logger.js"
+import pino from 'pino'
+
+const logger = pino({
+  level: process.env.LOG_LEVEL || 'info',
+  // Redact sensitive fields
+  redact: {
+    paths: [
+      'password',
+      'secret',
+      'token',
+      'authorization',
+      '*.password',
+      '*.secret',
+    ],
+    censor: '[REDACTED]',
+  },
+})
+
+export default logger
+
+// Usage
+logger.error('Database error', {
+  error: err.message,
+  password: 'secret123', // Logged as [REDACTED]
+  user: {
+    id: 1,
+    password: 'hash', // Also [REDACTED]
+  },
+})
+```
+
+---
+
+## Comparison
+
+| Exposed Error | Safe Error |
+|---------------|------------|
+| Stack traces | Request ID for lookup |
+| SQL queries | "Database error" |
+| File paths | "Resource not found" |
+| Config values | "Service unavailable" |
+| Internal types | Error codes |
+| Regex patterns | "Invalid format" |
+
+---
+
+## Response Examples
+
+### Bad Response ❌
+```json
+{
+  "error": "ER_PARSE_ERROR: You have an error in your SQL syntax near 'SELECT * FROM users WHERE id = 1; DROP TABLE users;--'",
+  "stack": "at Query.Sequence._packetToError (/var/www/app/node_modules/mysql/lib/protocol/...)",
+  "query": "SELECT * FROM users WHERE id = ?",
+  "sql": "SELECT * FROM users WHERE id = '1; DROP TABLE users;--'"
+}
+```
+
+### Good Response ✅
+```json
+{
+  "error": "Unable to process request",
+  "code": "INTERNAL_ERROR",
+  "requestId": "req_1234567890"
+}
+```
+
+---
+
+## Checklist
+
+### Never Expose
+- Stack traces
+- SQL queries
+- File paths
+- Environment variables
+- Internal IP addresses
+- Software versions
+- Database table/column names
+- Validation regex patterns
+
+### Safe to Expose
+- Error codes
+- User-friendly messages
+- Request IDs
+- Field names for validation errors
+- Public documentation links
+
+:::tip[Support Workflow]
+Use request IDs to bridge the gap:
+1. User sees: "Error occurred. Reference: req_abc123"
+2. User contacts support with reference ID
+3. Support looks up: Full error details in logs
+4. Debugging happens safely, privately
+:::

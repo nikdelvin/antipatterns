@@ -1,0 +1,249 @@
+---
+import fs from 'node:fs'
+import path from 'node:path'
+
+// Read project source files during build
+const projectRoot = path.resolve(process.cwd(), '..')
+const srcDir = path.join(projectRoot, 'src')
+
+interface FileEntry {
+  name: string
+  path: string
+  relativePath: string
+  isDirectory: boolean
+  children?: FileEntry[]
+}
+
+function readDirectory(dirPath: string, basePath: string): FileEntry[] {
+  const entries: FileEntry[] = []
+  
+  try {
+    const items = fs.readdirSync(dirPath, { withFileTypes: true })
+    
+    for (const item of items) {
+      const fullPath = path.join(dirPath, item.name)
+      const relativePath = path.relative(basePath, fullPath)
+      
+      if (item.isDirectory()) {
+        entries.push({
+          name: item.name,
+          path: fullPath,
+          relativePath,
+          isDirectory: true,
+          children: readDirectory(fullPath, basePath),
+        })
+      } else if (item.name.endsWith('.js') || item.name.endsWith('.sql') || item.name.endsWith('.json')) {
+        entries.push({
+          name: item.name,
+          path: fullPath,
+          relativePath,
+          isDirectory: false,
+        })
+      }
+    }
+  } catch (e) {
+    // Ignore read errors
+  }
+  
+  return entries.sort((a, b) => {
+    // Directories first, then files
+    if (a.isDirectory && !b.isDirectory) return -1
+    if (!a.isDirectory && b.isDirectory) return 1
+    return a.name.localeCompare(b.name)
+  })
+}
+
+const fileTree = readDirectory(srcDir, projectRoot)
+
+// Also include root-level files
+const rootFiles: FileEntry[] = []
+try {
+  const rootItems = fs.readdirSync(projectRoot, { withFileTypes: true })
+  for (const item of rootItems) {
+    if (!item.isDirectory() && (item.name.endsWith('.js') || item.name === 'package.json')) {
+      rootFiles.push({
+        name: item.name,
+        path: path.join(projectRoot, item.name),
+        relativePath: item.name,
+        isDirectory: false,
+      })
+    }
+  }
+} catch (e) {}
+
+// Include db migrations
+let migrations: FileEntry[] = []
+const dbDir = path.join(srcDir, 'db', 'migrations')
+try {
+  if (fs.existsSync(dbDir)) {
+    const items = fs.readdirSync(dbDir, { withFileTypes: true })
+    for (const item of items) {
+      if (!item.isDirectory()) {
+        migrations.push({
+          name: item.name,
+          path: path.join(dbDir, item.name),
+          relativePath: `src/db/migrations/${item.name}`,
+          isDirectory: false,
+        })
+      }
+    }
+  }
+} catch (e) {}
+---
+
+<div class="file-browser">
+  <div class="browser-header">
+    <span class="browser-title">📁 Project Source Files</span>
+    <span class="browser-subtitle">Click a file to view its contents</span>
+  </div>
+  
+  <div class="file-tree">
+    {rootFiles.length > 0 && (
+      <div class="tree-section">
+        <div class="section-title">Root</div>
+        {rootFiles.map(file => (
+          <a class="file-item" href={`/source/${file.relativePath.replace(/\//g, '--').replace(/\./g, '-')}`}>
+            <span class="file-icon">📄</span>
+            <span class="file-name">{file.name}</span>
+          </a>
+        ))}
+      </div>
+    )}
+    
+    {migrations.length > 0 && (
+      <div class="tree-section">
+        <div class="section-title">Database Migrations</div>
+        {migrations.map(file => (
+          <a class="file-item" href={`/source/${file.relativePath.replace(/\//g, '--').replace(/\./g, '-')}`}>
+            <span class="file-icon">🗄️</span>
+            <span class="file-name">{file.name}</span>
+          </a>
+        ))}
+      </div>
+    )}
+    
+    {fileTree.map(entry => (
+      <div class="tree-section">
+        {entry.isDirectory ? (
+          <>
+            <div class="section-title">📁 {entry.name}/</div>
+            {entry.children?.map(child => (
+              child.isDirectory ? (
+                <div class="subsection">
+                  <div class="subsection-title">📁 {child.name}/</div>
+                  {child.children?.map(subchild => (
+                    <a class="file-item indent-2" href={`/source/${subchild.relativePath.replace(/\//g, '--').replace(/\./g, '-')}`}>
+                      <span class="file-icon">📄</span>
+                      <span class="file-name">{subchild.name}</span>
+                    </a>
+                  ))}
+                </div>
+              ) : (
+                <a class="file-item indent-1" href={`/source/${child.relativePath.replace(/\//g, '--').replace(/\./g, '-')}`}>
+                  <span class="file-icon">📄</span>
+                  <span class="file-name">{child.name}</span>
+                </a>
+              )
+            ))}
+          </>
+        ) : (
+          <a class="file-item" href={`/source/${entry.relativePath.replace(/\//g, '--').replace(/\./g, '-')}`}>
+            <span class="file-icon">📄</span>
+            <span class="file-name">{entry.name}</span>
+          </a>
+        )}
+      </div>
+    ))}
+  </div>
+</div>
+
+<style>
+  .file-browser {
+    border: 1px solid var(--sl-color-gray-5);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  
+  .browser-header {
+    background: var(--sl-color-gray-6);
+    padding: 1rem;
+    border-bottom: 1px solid var(--sl-color-gray-5);
+  }
+  
+  .browser-title {
+    font-size: 1.1rem;
+    font-weight: 600;
+    display: block;
+    margin-bottom: 0.25rem;
+  }
+  
+  .browser-subtitle {
+    font-size: 0.85rem;
+    color: var(--sl-color-gray-3);
+  }
+  
+  .file-tree {
+    padding: 0.5rem;
+    max-height: 70vh;
+    overflow-y: auto;
+    margin-top: 0;
+  }
+  
+  .tree-section {
+    margin-top: 0;
+    margin-bottom: 0;
+  }
+  
+  .section-title {
+    font-weight: 600;
+    padding: 0.5rem;
+    color: var(--sl-color-white);
+    font-size: 0.9rem;
+  }
+  
+  .subsection {
+    margin-top: 0;
+    margin-left: 1rem;
+  }
+  
+  .subsection-title {
+    font-weight: 500;
+    padding: 0.25rem 0.5rem;
+    color: var(--sl-color-gray-2);
+    font-size: 0.85rem;
+  }
+  
+  .file-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.4rem 0.75rem;
+    border-radius: 4px;
+    text-decoration: none;
+    color: var(--sl-color-gray-2);
+    font-family: var(--sl-font-mono);
+    font-size: 0.8rem;
+    transition: background 0.2s;
+  }
+  
+  .file-item:hover {
+    background: var(--sl-color-gray-5);
+    color: var(--sl-color-white);
+  }
+  
+  .indent-1 {
+    margin-left: 1rem;
+  }
+  
+  .indent-2 {
+    margin-left: 2rem;
+  }
+  
+  .file-icon {
+    font-size: 1rem;
+  }
+  
+  .file-name {
+    flex: 1;
+  }
+</style>

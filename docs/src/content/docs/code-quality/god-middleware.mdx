@@ -1,0 +1,418 @@
+---
+title: God Middleware
+description: A single middleware that does everything
+---
+
+## What is God Middleware?
+
+**God Middleware** is a single middleware function that handles too many responsibilities:
+
+```javascript
+app.use((req, res, next) => {
+  // Authentication
+  // Authorization  
+  // Logging
+  // Rate limiting
+  // CORS
+  // Body parsing
+  // Error handling
+  // Caching
+  // Metrics
+  // ... and more
+})
+```
+
+It's the middleware equivalent of a God Object - doing everything, knowing everything, impossible to maintain.
+
+<div class="wrong-way">
+
+## Real Example from the Project
+
+</div>
+
+<div class="file-path">src/middleware/middleware.js</div>
+
+```javascript title="src/middleware/middleware.js"
+// ANTIPATTERN: God Middleware that does EVERYTHING!
+
+export function godMiddleware() {
+  let requestCount = 0
+  const rateLimit = {}
+  
+  return async (c, next) => {
+    requestCount++
+    const start = Date.now()
+    const ip = c.req.header('x-forwarded-for') || 'unknown'
+    
+    // ===== RATE LIMITING =====
+    rateLimit[ip] = rateLimit[ip] || { count: 0, reset: Date.now() + 60000 }
+    if (Date.now() > rateLimit[ip].reset) {
+      rateLimit[ip] = { count: 0, reset: Date.now() + 60000 }
+    }
+    rateLimit[ip].count++
+    if (rateLimit[ip].count > 100) {
+      return c.json({ error: 'Too many requests' }, 429)
+    }
+    
+    // ===== LOGGING =====
+    console.log(`[${new Date().toISOString()}] ${c.req.method} ${c.req.path}`)
+    console.log(`Request #${requestCount} from ${ip}`)
+    
+    // ===== AUTHENTICATION =====
+    const token = c.req.header('authorization')?.replace('Bearer ', '')
+    if (token && token !== 'undefined') {
+      // Insecure token parsing
+      try {
+        const payload = JSON.parse(atob(token.split('.')[1]))
+        c.set('user', payload)
+        console.log(`Authenticated user: ${payload.id}`)
+      } catch (e) {
+        console.log('Token parse failed')
+      }
+    }
+    
+    // ===== AUTHORIZATION =====
+    const user = c.get('user')
+    const path = c.req.path
+    if (path.startsWith('/admin') && (!user || user.role !== 'admin')) {
+      return c.json({ error: 'Forbidden' }, 403)
+    }
+    
+    // ===== CORS =====
+    c.res.headers.set('Access-Control-Allow-Origin', '*')
+    c.res.headers.set('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE')
+    
+    // ===== BODY PARSING =====
+    if (c.req.method === 'POST' || c.req.method === 'PUT') {
+      try {
+        const body = await c.req.json()
+        c.set('parsedBody', body)
+      } catch (e) {
+        // Ignore parse errors
+      }
+    }
+    
+    // ===== REQUEST MODIFICATION =====
+    c.req.startTime = start
+    c.req.requestId = Math.random().toString(36)
+    
+    // ===== ERROR HANDLING =====
+    try {
+      await next()
+    } catch (error) {
+      console.error('Error in request:', error)
+      return c.json({ error: error.message }, 500)
+    }
+    
+    // ===== RESPONSE LOGGING =====
+    const duration = Date.now() - start
+    console.log(`Response: ${c.res.status} in ${duration}ms`)
+    
+    // ===== METRICS =====
+    global.metrics = global.metrics || {}
+    global.metrics.totalRequests = (global.metrics.totalRequests || 0) + 1
+    global.metrics.totalDuration = (global.metrics.totalDuration || 0) + duration
+    
+    // ===== CACHING =====
+    if (c.req.method === 'GET' && c.res.status === 200) {
+      c.res.headers.set('Cache-Control', 'public, max-age=3600')
+    }
+    
+    // ===== SECURITY HEADERS =====
+    c.res.headers.set('X-Content-Type-Options', 'nosniff')
+    c.res.headers.set('X-Frame-Options', 'DENY')
+  }
+}
+
+export default godMiddleware
+```
+
+## Why It's Bad
+
+### 1. Single Responsibility Violation
+
+The middleware handles 10+ distinct concerns:
+- Rate limiting
+- Logging (request & response)
+- Authentication
+- Authorization
+- CORS
+- Body parsing
+- Request modification
+- Error handling
+- Metrics collection
+- Caching headers
+- Security headers
+
+### 2. Impossible to Test
+
+```javascript
+// How do you test just the rate limiting?
+// You can't - it's tangled with everything else
+describe('godMiddleware', () => {
+  it('should rate limit', () => {
+    // Need to set up auth, logging, CORS, etc.
+    // Just to test one feature
+  })
+})
+```
+
+### 3. Performance Impact
+
+```javascript
+// Every request runs ALL this code
+// Even if it doesn't need authentication
+// Even if it's just a health check
+// Even if CORS isn't relevant
+```
+
+### 4. Order Dependencies are Hidden
+
+```javascript
+// What happens if you need auth before rate limiting?
+// Or rate limiting before auth?
+// It's all in one function - you have to rewrite it
+```
+
+---
+
+<div class="right-way">
+
+## The Right Way
+
+</div>
+
+### 1. Separate Middleware Functions
+
+```javascript title="src/middleware/rateLimit.js"
+import { RateLimiterMemory } from 'rate-limiter-flexible'
+
+const limiter = new RateLimiterMemory({
+  points: 100,
+  duration: 60,
+})
+
+export async function rateLimitMiddleware(c, next) {
+  const ip = c.req.header('x-forwarded-for') || 'unknown'
+  
+  try {
+    await limiter.consume(ip)
+    await next()
+  } catch {
+    return c.json({ error: 'Too many requests' }, 429)
+  }
+}
+```
+
+```javascript title="src/middleware/auth.js"
+import { verify } from 'jsonwebtoken'
+
+export async function authMiddleware(c, next) {
+  const token = c.req.header('authorization')?.replace('Bearer ', '')
+  
+  if (!token) {
+    c.set('user', null)
+    return await next()
+  }
+  
+  try {
+    const payload = verify(token, process.env.JWT_SECRET)
+    c.set('user', payload)
+  } catch (error) {
+    c.set('user', null)
+  }
+  
+  await next()
+}
+```
+
+```javascript title="src/middleware/logging.js"
+export async function loggingMiddleware(c, next) {
+  const start = Date.now()
+  const requestId = crypto.randomUUID()
+  
+  c.set('requestId', requestId)
+  
+  console.log(JSON.stringify({
+    type: 'request',
+    requestId,
+    method: c.req.method,
+    path: c.req.path,
+    timestamp: new Date().toISOString(),
+  }))
+  
+  await next()
+  
+  console.log(JSON.stringify({
+    type: 'response',
+    requestId,
+    status: c.res.status,
+    duration: Date.now() - start,
+  }))
+}
+```
+
+### 2. Compose Middleware
+
+```javascript title="src/middleware/index.js"
+import { rateLimitMiddleware } from './rateLimit.js'
+import { authMiddleware } from './auth.js'
+import { loggingMiddleware } from './logging.js'
+import { corsMiddleware } from './cors.js'
+import { securityHeaders } from './security.js'
+
+// Export individually for selective use
+export {
+  rateLimitMiddleware,
+  authMiddleware,
+  loggingMiddleware,
+  corsMiddleware,
+  securityHeaders,
+}
+
+// Or create configured stacks
+export function createApiMiddleware() {
+  return [
+    loggingMiddleware,
+    corsMiddleware,
+    rateLimitMiddleware,
+    authMiddleware,
+    securityHeaders,
+  ]
+}
+```
+
+### 3. Apply Selectively
+
+```javascript title="src/app.js"
+import { Hono } from 'hono'
+import { 
+  loggingMiddleware, 
+  authMiddleware,
+  rateLimitMiddleware 
+} from './middleware/index.js'
+
+const app = new Hono()
+
+// Global middleware
+app.use('*', loggingMiddleware)
+
+// API routes need auth
+app.use('/api/*', authMiddleware)
+
+// Public routes don't need auth
+app.use('/public/*', rateLimitMiddleware)
+
+// Admin routes need extra protection
+app.use('/admin/*', authMiddleware, requireRole('admin'))
+```
+
+### 4. Higher-Order Middleware
+
+```javascript title="src/middleware/requireAuth.js"
+// Configurable middleware factory
+export function requireRole(...roles) {
+  return async (c, next) => {
+    const user = c.get('user')
+    
+    if (!user) {
+      return c.json({ error: 'Unauthorized' }, 401)
+    }
+    
+    if (!roles.includes(user.role)) {
+      return c.json({ error: 'Forbidden' }, 403)
+    }
+    
+    await next()
+  }
+}
+
+// Usage
+app.use('/admin/*', requireRole('admin', 'superadmin'))
+app.use('/moderator/*', requireRole('admin', 'moderator'))
+```
+
+---
+
+## Comparison
+
+| God Middleware | Separate Middleware |
+|----------------|---------------------|
+| One 200+ line function | Multiple 20-30 line functions |
+| All-or-nothing | Selective application |
+| Hard to test | Easy to test in isolation |
+| Hidden dependencies | Clear order in app.use() |
+| Single point of failure | Isolated failures |
+| Can't reuse parts | Composable |
+
+---
+
+## Middleware Design Principles
+
+### 1. Single Responsibility
+Each middleware does one thing well.
+
+### 2. Configurable
+Use factories to create configured middleware:
+
+```javascript
+export function cache(options = {}) {
+  const { maxAge = 3600 } = options
+  return async (c, next) => {
+    await next()
+    c.res.headers.set('Cache-Control', `max-age=${maxAge}`)
+  }
+}
+```
+
+### 3. Fail Fast
+Return early on errors:
+
+```javascript
+export async function auth(c, next) {
+  const token = c.req.header('authorization')
+  if (!token) {
+    return c.json({ error: 'No token' }, 401)
+  }
+  // Continue...
+  await next()
+}
+```
+
+### 4. Don't Swallow Errors
+Let errors propagate to error handling middleware:
+
+```javascript
+// Bad
+try {
+  await next()
+} catch (e) {
+  console.log(e) // Swallowed!
+}
+
+// Good
+await next() // Let it throw
+
+// Or handle specifically
+try {
+  await next()
+} catch (e) {
+  if (e instanceof ValidationError) {
+    return c.json({ error: e.message }, 400)
+  }
+  throw e // Re-throw unknown errors
+}
+```
+
+:::tip[Middleware Order Matters]
+Document the order dependencies:
+
+```javascript
+// Order:
+// 1. Logging (first - logs everything)
+// 2. CORS (before auth - for preflight)
+// 3. Rate limiting (before expensive operations)
+// 4. Auth (before authorization)
+// 5. Authorization (before handlers)
+```
+:::

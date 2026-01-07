@@ -1,0 +1,356 @@
+---
+title: SQL Injection
+description: The most dangerous database vulnerability
+---
+
+## What is SQL Injection?
+
+**SQL Injection** is when user input is directly concatenated into SQL queries, allowing attackers to execute arbitrary SQL:
+
+```javascript
+// User input: ' OR 1=1; DROP TABLE users; --
+const query = `SELECT * FROM users WHERE id = '${userId}'`
+
+// Becomes:
+// SELECT * FROM users WHERE id = '' OR 1=1; DROP TABLE users; --'
+```
+
+<div class="wrong-way">
+
+## Real Example from the Project
+
+</div>
+
+<div class="file-path">src/security/security.js</div>
+
+```javascript title="src/security/security.js"
+// ANTIPATTERN: SQL Injection Vulnerabilities!
+
+// Direct string concatenation - maximum vulnerability
+export function sqlInjection(db) {
+  return async (c) => {
+    const { id } = c.req.param()
+    
+    // NEVER DO THIS!
+    const query = `SELECT * FROM god_table WHERE id = ${id}`
+    const result = await db.prepare(query).get()
+    
+    return c.json({ data: result })
+  }
+}
+
+// Template literals don't help
+export function templateInjection(db) {
+  return async (c) => {
+    const { username, password } = await c.req.json()
+    
+    // Still vulnerable!
+    const query = `
+      SELECT * FROM god_table 
+      WHERE username = '${username}' 
+      AND password = '${password}'
+    `
+    const user = await db.prepare(query).get()
+    
+    return c.json({ user })
+  }
+}
+
+// Even "escaping" is dangerous
+export function badEscaping(db) {
+  return async (c) => {
+    const { search } = c.req.query()
+    
+    // Naive escaping fails!
+    const escaped = search.replace(/'/g, "''")
+    const query = `SELECT * FROM products WHERE name LIKE '%${escaped}%'`
+    
+    // Attacker uses: \' OR 1=1 --
+    // Escape produces: \'' OR 1=1 --
+    // SQL: WHERE name LIKE '%\'' OR 1=1 --%'
+    // Still works!
+    
+    const products = await db.prepare(query).all()
+    return c.json({ products })
+  }
+}
+```
+
+## Attack Examples
+
+### 1. Authentication Bypass
+
+```javascript
+// Backend code
+const query = `
+  SELECT * FROM users 
+  WHERE username = '${username}' 
+  AND password = '${password}'
+`
+
+// Attacker enters:
+// Username: admin' --
+// Password: anything
+
+// Query becomes:
+// SELECT * FROM users 
+// WHERE username = 'admin' --' AND password = 'anything'
+
+// The -- comments out password check!
+// Attacker logs in as admin.
+```
+
+### 2. Data Extraction
+
+```javascript
+// Vulnerable search
+const query = `SELECT name, price FROM products WHERE name LIKE '%${search}%'`
+
+// Attacker enters:
+// ' UNION SELECT username, password FROM users --
+
+// Query becomes:
+// SELECT name, price FROM products WHERE name LIKE '%' 
+// UNION SELECT username, password FROM users --%'
+
+// Returns ALL usernames and passwords!
+```
+
+### 3. Data Destruction
+
+```javascript
+// Vulnerable delete
+const query = `DELETE FROM posts WHERE id = ${postId} AND user_id = ${userId}`
+
+// Attacker enters postId as:
+// 1 OR 1=1 --
+
+// Query becomes:
+// DELETE FROM posts WHERE id = 1 OR 1=1 -- AND user_id = 5
+
+// Deletes ALL posts!
+```
+
+### 4. Blind SQL Injection
+
+```javascript
+// No visible output, but still dangerous
+// Attacker can infer data through timing:
+
+// 1 AND (SELECT CASE WHEN (username='admin') THEN pg_sleep(5) ELSE pg_sleep(0) END FROM users LIMIT 1)
+
+// If response takes 5 seconds, admin exists!
+// Repeat for password, character by character.
+```
+
+---
+
+## Why It's Devastating
+
+### 1. Complete Data Breach
+- Extract entire database
+- Usernames, passwords, emails
+- Credit cards, SSNs, private data
+
+### 2. Data Modification
+- Change prices to $0
+- Elevate privileges
+- Modify records
+
+### 3. Data Destruction
+- DROP TABLE
+- TRUNCATE
+- DELETE WHERE 1=1
+
+### 4. Server Compromise
+- In some databases: file read/write
+- Command execution
+- Lateral movement
+
+---
+
+<div class="right-way">
+
+## The Right Way
+
+</div>
+
+### 1. Parameterized Queries
+
+```javascript title="src/repositories/user.repository.js"
+// ALWAYS use parameters!
+export function getUser(db, id) {
+  // Parameter placeholder: ?
+  const query = `SELECT * FROM users WHERE id = ?`
+  return db.prepare(query).get(id)
+}
+
+export function authenticate(db, username, password) {
+  const query = `
+    SELECT * FROM users 
+    WHERE username = ? 
+    AND password_hash = ?
+  `
+  return db.prepare(query).get(username, passwordHash)
+}
+
+export function searchProducts(db, searchTerm) {
+  const query = `
+    SELECT * FROM products 
+    WHERE name LIKE ?
+  `
+  return db.prepare(query).all(`%${searchTerm}%`)
+}
+```
+
+### 2. Named Parameters
+
+```javascript title="src/repositories/order.repository.js"
+// Using named parameters (SQLite syntax)
+export function createOrder(db, data) {
+  const query = `
+    INSERT INTO orders (user_id, total, status)
+    VALUES ($userId, $total, $status)
+  `
+  return db.prepare(query).run({
+    userId: data.userId,
+    total: data.total,
+    status: 'pending',
+  })
+}
+```
+
+### 3. ORM/Query Builder
+
+```javascript title="src/repositories/user.repository.js (Drizzle)"
+import { eq, like } from 'drizzle-orm'
+import { users, products } from '../db/schema.js'
+
+// Drizzle ORM - automatically parameterized
+export async function getUser(db, id) {
+  return await db
+    .select()
+    .from(users)
+    .where(eq(users.id, id))
+    .get()
+}
+
+export async function searchProducts(db, searchTerm) {
+  return await db
+    .select()
+    .from(products)
+    .where(like(products.name, `%${searchTerm}%`))
+    .all()
+}
+
+// Even complex queries are safe
+export async function getUserOrders(db, userId, status) {
+  return await db
+    .select()
+    .from(orders)
+    .where(
+      and(
+        eq(orders.userId, userId),
+        eq(orders.status, status)
+      )
+    )
+    .all()
+}
+```
+
+### 4. Input Validation
+
+```javascript title="src/middleware/validation.js"
+import { z } from 'zod'
+
+// Validate before query - defense in depth
+const getUserSchema = z.object({
+  id: z.coerce.number().int().positive(),
+})
+
+const searchSchema = z.object({
+  query: z.string().max(100).regex(/^[a-zA-Z0-9\s-]+$/),
+})
+
+export function validateParams(schema) {
+  return async (c, next) => {
+    const result = schema.safeParse(c.req.param())
+    if (!result.success) {
+      return c.json({ error: 'Invalid parameters' }, 400)
+    }
+    c.set('params', result.data)
+    await next()
+  }
+}
+```
+
+### 5. Least Privilege
+
+```sql
+-- Don't use root/admin database user
+-- Create restricted users
+
+-- For web app:
+CREATE USER webapp WITH PASSWORD 'secret';
+GRANT SELECT, INSERT, UPDATE, DELETE ON users TO webapp;
+GRANT SELECT, INSERT, UPDATE, DELETE ON orders TO webapp;
+-- NO: DROP, CREATE, ALTER, GRANT
+
+-- For read-only operations:
+CREATE USER readonly WITH PASSWORD 'secret';
+GRANT SELECT ON users TO readonly;
+GRANT SELECT ON orders TO readonly;
+```
+
+---
+
+## Comparison
+
+| Vulnerable | Safe |
+|------------|------|
+| `"... WHERE id = " + id` | `"... WHERE id = ?"` with `[id]` |
+| Template literals | Parameterized queries |
+| String escaping | ORM/Query builder |
+| Root database user | Least privilege user |
+
+---
+
+## Testing for SQL Injection
+
+### Manual Testing
+```text
+' OR 1=1 --
+" OR 1=1 --
+1; DROP TABLE users --
+1 UNION SELECT null --
+' AND 1=2 --
+```
+
+### Automated Tools
+- SQLMap
+- Burp Suite
+- OWASP ZAP
+
+### Prevention Checklist
+- [ ] All queries use parameters
+- [ ] ORM for complex queries
+- [ ] Input validation
+- [ ] Least privilege DB user
+- [ ] WAF rules for SQLi patterns
+- [ ] Regular security audits
+
+---
+
+## OWASP Classification
+
+SQL Injection is **A03:2021 - Injection** in the OWASP Top 10.
+
+It's one of the oldest and most dangerous vulnerabilities, yet still common in:
+- Legacy applications
+- Junior developer code
+- Quick "prototypes" that go to production
+- ORMs used incorrectly (raw queries)
+
+:::caution[No Excuses]
+There is no valid reason to concatenate user input into SQL queries. Ever. Use parameters or an ORM. Period.
+:::

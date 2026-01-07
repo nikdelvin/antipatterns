@@ -1,0 +1,23 @@
+{
+  "version": "6",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "0",
+      "when": 1704067200000,
+      "tag": "migration",
+      "breakpoints": false
+    }
+  ],
+  "_meta": {
+    "comment": "ANTIPATTERN: Meta file committed with wrong info",
+    "author": "unknown",
+    "reviewed": false,
+    "tested": false,
+    "safe_to_run": "maybe",
+    "rollback_tested": "no",
+    "production_ready": "lol no",
+    "secrets_exposed": true
+  }
+}

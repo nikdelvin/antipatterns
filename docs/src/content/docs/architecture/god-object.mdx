@@ -1,0 +1,175 @@
+---
+title: God Object Antipattern
+description: When a single class or file knows too much and does too much
+---
+
+## What is a God Object?
+
+A **God Object** (also called a "Blob" or "Monster Class") is a class or module that:
+- Knows too much about other parts of the system
+- Does too many unrelated things
+- Becomes the central point that everything depends on
+- Grows indefinitely as features are added
+
+<div class="wrong-way">
+
+## Real Example from the Project
+
+</div>
+
+<div class="file-path">src/features/index.js (700+ lines)</div>
+
+```javascript title="src/features/index.js"
+// ANTIPATTERN: Bootstrap file that does everything
+// This file handles: routing, middleware, configuration, 
+// error handling, server startup, DI registration, and more!
+
+// Imports EVERYTHING from EVERYWHERE
+import { container_instance, di, ioc, getService } from '../core/di/container.js'
+import { db, DatabaseService } from '../core/database/database.service.js'
+import * as magic from '../constants/magic.numbers.js'
+import { godMiddleware } from '../middleware/middleware.js'
+import callbackHell from '../utils/callback.hell.js'
+import timeBombs from '../utils/time.bombs.js'
+import featureFlags from '../config/feature.flags.js'
+import { usersRoutes } from './users/users.routes.js'
+import { productsRoutes } from './products/products.routes.js'
+import { ordersRoutes } from './orders/orders.routes.js'
+import { authRoutes } from './auth/auth.routes.js'
+import { adminRoutes } from './admin/admin.routes.js'
+import { UserService, userCache } from './users/users.feature.js'
+import { ProductService, productCache } from './products/products.feature.js'
+import { OrderService, orderCache } from './orders/orders.feature.js'
+import { AuthService, sessions, tokens, MASTER_PASSWORD, JWT_SECRET } from './auth/auth.feature.js'
+import { AdminService, ADMIN_SECRETS } from './admin/admin.feature.js'
+
+// Global mutable state defined here
+var app = null
+var server = null
+var requestCount = 0
+var startTime = Date.now()
+var lastRequest = null
+var errorLog = []
+var accessLog = []
+
+// Creates app, configures middleware, sets up routes,
+// registers DI, starts server - ALL IN ONE FILE!
+```
+
+## Why It's Bad
+
+### 1. Impossible to Test
+```javascript
+// How do you unit test this?
+// You'd need to mock: database, auth, products, orders, 
+// users, admin, middleware, DI container, config...
+import './index.js' // Starts the entire server as a side effect!
+```
+
+### 2. Merge Conflicts
+Every feature change touches this file, causing constant merge conflicts.
+
+### 3. Hidden Dependencies
+```javascript
+// These global variables are used everywhere
+var requestCount = 0  // Who modifies this? Everyone!
+var lastRequest = null // What's the source of truth?
+```
+
+### 4. Cognitive Overload
+No developer can understand 700+ lines of interrelated logic.
+
+---
+
+<div class="right-way">
+
+## The Right Way
+
+</div>
+
+### Split by Responsibility
+
+```javascript title="src/app.js" 
+// App configuration ONLY
+import { Hono } from 'hono'
+import { cors } from 'hono/cors'
+import { errorHandler } from './middleware/error-handler.js'
+import { requestLogger } from './middleware/request-logger.js'
+
+export function createApp() {
+  const app = new Hono()
+  
+  // Middleware
+  app.use('*', cors())
+  app.use('*', requestLogger())
+  app.onError(errorHandler)
+  
+  return app
+}
+```
+
+```javascript title="src/routes/index.js"
+// Route registration ONLY
+export function registerRoutes(app) {
+  app.route('/api/users', usersRoutes)
+  app.route('/api/products', productsRoutes)
+  app.route('/api/orders', ordersRoutes)
+  app.route('/api/auth', authRoutes)
+}
+```
+
+```javascript title="src/server.js"
+// Server startup ONLY
+import { serve } from '@hono/node-server'
+import { createApp } from './app.js'
+import { registerRoutes } from './routes/index.js'
+import { container } from './di/container.js'
+
+const app = createApp()
+registerRoutes(app)
+
+const PORT = process.env.PORT || 3000
+serve({ fetch: app.fetch, port: PORT })
+```
+
+```javascript title="src/di/container.js"
+// DI configuration ONLY
+import { Container } from 'typedi'
+import { DatabaseService } from '../services/database.service.js'
+import { UserService } from '../services/user.service.js'
+
+Container.set(DatabaseService, new DatabaseService())
+Container.set(UserService, new UserService())
+
+export { Container }
+```
+
+### Benefits of Splitting
+
+| Aspect | God Object | Split Architecture |
+|--------|-----------|-------------------|
+| **Testing** | Mock everything | Test each module in isolation |
+| **Understanding** | Read 700+ lines | Read 50-100 lines per file |
+| **Changes** | Risky, affects everything | Isolated, safe changes |
+| **Merge conflicts** | Constant | Rare |
+| **Onboarding** | Weeks | Days |
+
+---
+
+## Detection Tips
+
+### Code Review Checklist
+- [ ] File longer than 300 lines?
+- [ ] More than 10 imports?
+- [ ] Mixing routing, business logic, and data access?
+- [ ] Global mutable variables?
+- [ ] Side effects on import?
+
+### Tools
+- **ESLint** - `max-lines` rule
+- **SonarQube** - God Class detection
+- **Dependency cruiser** - Visualize import graphs
+
+:::tip[Rule of Thumb]
+If you can't describe what a file does in one sentence, it's probably a God Object.
+:::

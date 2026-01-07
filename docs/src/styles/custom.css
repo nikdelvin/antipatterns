@@ -1,0 +1,138 @@
+/* Custom styles for Antipatterns Guide */
+
+/* Dark mode colors. */
+/* Dark mode colors. */
+:root {
+	--sl-color-accent-low: #131e4f;
+	--sl-color-accent: #3447ff;
+	--sl-color-accent-high: #b3c7ff;
+	--sl-color-white: #ffffff;
+	--sl-color-gray-1: #eceef2;
+	--sl-color-gray-2: #c0c2c7;
+	--sl-color-gray-3: #888b96;
+	--sl-color-gray-4: #545861;
+	--sl-color-gray-5: #353841;
+	--sl-color-gray-6: #24272f;
+	--sl-color-black: #17181c;
+}
+/* Light mode colors. */
+:root[data-theme='light'] {
+	--sl-color-accent-low: #c7d6ff;
+	--sl-color-accent: #364bff;
+	--sl-color-accent-high: #182775;
+	--sl-color-white: #17181c;
+	--sl-color-gray-1: #24272f;
+	--sl-color-gray-2: #353841;
+	--sl-color-gray-3: #545861;
+	--sl-color-gray-4: #888b96;
+	--sl-color-gray-5: #c0c2c7;
+	--sl-color-gray-6: #eceef2;
+	--sl-color-gray-7: #f5f6f8;
+	--sl-color-black: #ffffff;
+}
+
+/* Wrong way code blocks */
+.wrong-way {
+  border-left: 4px solid #e53935;
+  background: rgba(229, 57, 53, 0.1);
+  padding: 1rem;
+  margin: 1rem 0;
+  border-radius: 0 8px 8px 0;
+}
+
+.wrong-way::before {
+  content: "❌ WRONG WAY";
+  display: block;
+  font-weight: bold;
+  color: #e53935;
+  margin-bottom: 0.5rem;
+}
+
+/* Right way code blocks */
+.right-way {
+  border-left: 4px solid #4caf50;
+  background: rgba(76, 175, 80, 0.1);
+  padding: 1rem;
+  margin: 1rem 0;
+  border-radius: 0 8px 8px 0;
+}
+
+.right-way::before {
+  content: "✅ RIGHT WAY";
+  display: block;
+  font-weight: bold;
+  color: #4caf50;
+  margin-bottom: 0.5rem;
+}
+
+/* Warning boxes */
+.warning-box {
+  border: 2px solid #ff9800;
+  background: rgba(255, 152, 0, 0.1);
+  padding: 1rem;
+  margin: 1rem 0;
+  border-radius: 8px;
+}
+
+.warning-box::before {
+  content: "⚠️ WARNING";
+  display: block;
+  font-weight: bold;
+  color: #ff9800;
+  margin-bottom: 0.5rem;
+}
+
+/* Security alert boxes */
+.security-alert {
+  border: 2px solid #e53935;
+  background: rgba(229, 57, 53, 0.1);
+  padding: 1rem;
+  margin: 1rem 0;
+  border-radius: 8px;
+}
+
+.security-alert::before {
+  content: "🔒 SECURITY VULNERABILITY";
+  display: block;
+  font-weight: bold;
+  color: #e53935;
+  margin-bottom: 0.5rem;
+}
+
+/* File path badges */
+.file-path {
+  display: inline-block;
+  background: var(--sl-color-gray-5);
+  color: var(--sl-color-gray-1);
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  font-family: monospace;
+  font-size: 0.85rem;
+  margin-bottom: 0.5rem;
+}
+
+/* Comparison tables */
+.comparison-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1rem 0;
+}
+
+.comparison-table th {
+  background: var(--sl-color-gray-5);
+  padding: 0.75rem;
+  text-align: left;
+}
+
+.comparison-table td {
+  padding: 0.75rem;
+  border-bottom: 1px solid var(--sl-color-gray-5);
+}
+
+.comparison-table .wrong {
+  background: rgba(229, 57, 53, 0.1);
+}
+
+.comparison-table .right {
+  background: rgba(76, 175, 80, 0.1);
+}

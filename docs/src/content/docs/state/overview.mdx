@@ -1,0 +1,82 @@
+---
+title: State Management Antipatterns
+description: How global state and feature flags can destroy your application
+---
+
+## Overview
+
+State management antipatterns occur when application state is handled in ways that make code unpredictable, hard to debug, and impossible to test.
+
+## Common Problems
+
+### 1. Global Mutable State
+Shared variables that any part of the code can modify.
+
+### 2. Feature Flag Chaos
+Conflicting, stale, or poorly managed feature flags.
+
+### 3. Hidden Dependencies
+State accessed through globals instead of explicit parameters.
+
+---
+
+## Articles in This Section
+
+- [Global Mutable State](./global-mutable-state) - Shared state chaos
+- [Feature Flags](./feature-flags) - Flag management gone wrong
+
+---
+
+## Quick Comparison
+
+| Antipattern | Problem | Solution |
+|-------------|---------|----------|
+| Global Mutable State | Unpredictable changes | Dependency injection |
+| Feature Flags Chaos | Conflicting conditions | Feature flag service |
+
+---
+
+## Key Principles
+
+### 1. Explicit is Better Than Implicit
+
+```javascript
+// Bad - hidden dependency
+function getDiscount() {
+  return globalConfig.discountRate * globalUser.tier
+}
+
+// Good - explicit parameters
+function getDiscount(config, user) {
+  return config.discountRate * user.tier
+}
+```
+
+### 2. Immutable When Possible
+
+```javascript
+// Bad - mutating state
+globalState.users.push(newUser)
+
+// Good - create new state
+const newState = {
+  ...state,
+  users: [...state.users, newUser]
+}
+```
+
+### 3. Single Source of Truth
+
+```javascript
+// Bad - state scattered everywhere
+const userCache = {}  // in cache.js
+const userData = {}   // in user.js
+const userSession = {} // in session.js
+
+// Good - centralized store
+const store = createStore({
+  users: {},
+  sessions: {},
+  cache: {}
+})
+```

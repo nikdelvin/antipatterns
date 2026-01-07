@@ -1,0 +1,126 @@
+---
+title: Code Quality Antipatterns Overview
+description: Practices that make code unmaintainable and error-prone
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+Code quality antipatterns don't cause immediate failures but make the codebase:
+
+- **Hard to understand** - New developers can't figure out what's happening
+- **Hard to change** - Simple modifications break unexpected things
+- **Hard to test** - Code has too many hidden dependencies
+- **Hard to debug** - Problems are obscured by complex patterns
+
+## Antipatterns Covered
+
+<Card title="Monkey Patching" icon="warning">
+Modifying built-in prototypes and global objects at runtime
+</Card>
+<Card title="Magic Numbers" icon="warning">
+Unexplained numeric literals scattered throughout code
+</Card>
+<Card title="Callback Hell" icon="warning">
+Deeply nested callbacks and mixed async patterns
+</Card>
+<Card title="God Middleware" icon="warning">
+Single middleware handling too many responsibilities
+</Card>
+
+## The Cost of Poor Code Quality
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    Technical Debt Growth                        │
+│                                                                 │
+│  Time to add features                                           │
+│       │                                                         │
+│       │                                    ╱╱╱                  │
+│       │                               ╱╱╱╱                      │
+│       │                          ╱╱╱╱                           │
+│       │                     ╱╱╱╱                                │
+│       │                ╱╱╱╱                                     │
+│       │           ╱╱╱╱                                          │
+│       │      ╱╱╱╱                                               │
+│       │ ╱╱╱╱                                                    │
+│       └─────────────────────────────────────────────────        │
+│                    Codebase age →                               │
+│                                                                 │
+│  Without refactoring, every new feature takes longer            │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+## Quality Principles
+
+### 1. Readability Over Cleverness
+```javascript
+// Bad: Clever one-liner
+const r = a.reduce((p, c) => (p[c.t] = (p[c.t] || 0) + c.v, p), {})
+
+// Good: Readable logic
+const totals = {}
+for (const item of items) {
+  const type = item.type
+  totals[type] = (totals[type] || 0) + item.value
+}
+```
+
+### 2. Explicit Over Implicit
+```javascript
+// Bad: Magic behavior
+const user = getUser() // What if it returns null? Throws? Caches?
+
+// Good: Explicit contract
+const user = await userService.findById(id)
+if (!user) {
+  throw new NotFoundError(`User ${id} not found`)
+}
+```
+
+### 3. Single Responsibility
+```javascript
+// Bad: Function does everything
+function processOrder(order, user, inventory, payment, email) {
+  // 500 lines of mixed concerns
+}
+
+// Good: Focused functions
+function validateOrder(order) { /* ... */ }
+function checkInventory(items) { /* ... */ }
+function processPayment(payment) { /* ... */ }
+function sendConfirmation(email, order) { /* ... */ }
+```
+
+### 4. Fail Fast
+```javascript
+// Bad: Continue with bad data
+function processUser(user) {
+  const name = user?.name || 'Unknown'
+  const email = user?.email || ''
+  // Silently continues with garbage data
+}
+
+// Good: Validate early
+function processUser(user) {
+  if (!user) throw new Error('User is required')
+  if (!user.name) throw new Error('User name is required')
+  if (!user.email) throw new Error('User email is required')
+  // Now we know we have valid data
+}
+```
+
+---
+
+## Quick Metrics
+
+| Metric | Healthy | Warning | Critical |
+|--------|---------|---------|----------|
+| **File lines** | < 200 | 200-500 | > 500 |
+| **Function lines** | < 30 | 30-60 | > 60 |
+| **Cyclomatic complexity** | < 10 | 10-20 | > 20 |
+| **Nesting depth** | < 3 | 3-5 | > 5 |
+| **Parameters** | < 4 | 4-6 | > 6 |
+
+:::tip[Rule of Thumb]
+If you need to explain your code with comments, consider if the code itself could be clearer.
+:::

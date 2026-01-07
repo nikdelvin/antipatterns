@@ -1,0 +1,173 @@
+---
+import fs from 'node:fs'
+import path from 'node:path'
+import { Code } from 'astro:components'
+
+interface Props {
+  filePath: string
+  title?: string
+}
+
+const { filePath, title } = Astro.props
+
+// Read the actual file from the parent project
+const projectRoot = path.resolve(process.cwd(), '..')
+const fullPath = path.join(projectRoot, filePath)
+
+let content = ''
+let error = ''
+
+try {
+  content = fs.readFileSync(fullPath, 'utf-8')
+} catch (e) {
+  error = `Failed to read file: ${filePath}`
+}
+
+// Determine language from extension
+const ext = path.extname(filePath).slice(1)
+const langMap: Record<string, string> = {
+  js: 'js',
+  ts: 'ts',
+  mjs: 'js',
+  json: 'json',
+  sql: 'sql',
+  md: 'markdown',
+}
+const language = langMap[ext] || 'text'
+---
+
+<div class="source-file">
+  <div class="source-header">
+    <span class="source-icon">📄</span>
+    <span class="source-path">{filePath}</span>
+    {title && <span class="source-title">— {title}</span>}
+  </div>
+  
+  {error ? (
+    <div class="source-error">{error}</div>
+  ) : (
+    <div class="source-content">
+      <Code code={content} lang={language as any} theme="dark-plus" />
+    </div>
+  )}
+  
+  <div class="source-footer">
+    <span class="line-count">{content.split('\n').length} lines</span>
+    <span class="file-size">{(content.length / 1024).toFixed(2)} KB</span>
+  </div>
+</div>
+
+<style>
+  .source-file {
+    border: 1px solid var(--sl-color-gray-5);
+    border-radius: 8px;
+    overflow: hidden;
+    margin: 1rem 0;
+  }
+  
+  .source-header {
+    background: var(--sl-color-gray-6);
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--sl-color-gray-5);
+    font-family: var(--sl-font-mono);
+    font-size: 0.875rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  
+  .source-icon {
+    font-size: 1.1rem;
+  }
+  
+  .source-path {
+    color: var(--sl-color-white);
+    font-weight: 600;
+  }
+  
+  .source-title {
+    color: var(--sl-color-gray-3);
+    font-style: italic;
+  }
+  
+  .source-content {
+    margin: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    max-height: 80vh;
+    background: var(--sl-color-gray-7);
+  }
+  
+  /* Override Astro Code component styles */
+  .source-content :global(pre) {
+    margin: 0 !important;
+    padding: 1rem !important;
+    background: var(--sl-color-gray-6) !important;
+    border-radius: 0 !important;
+    border: none !important;
+  }
+  
+  .source-content :global(code) {
+    font-size: 13px !important;
+    font-weight: 500 !important;
+    line-height: 1.5 !important;
+  }
+  
+  /* VS Code-style scrollbar */
+  .source-content::-webkit-scrollbar {
+    width: 14px;
+  }
+  
+  .source-content::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  
+  .source-content::-webkit-scrollbar-thumb {
+    background: rgba(121, 121, 121, 0.4);
+    border: 3px solid transparent;
+    border-radius: 7px;
+    background-clip: padding-box;
+  }
+  
+  .source-content::-webkit-scrollbar-thumb:hover {
+    background: rgba(100, 100, 100, 0.7);
+    border: 3px solid transparent;
+    background-clip: padding-box;
+  }
+  
+  .source-content::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+  
+  /* Firefox scrollbar */
+  .source-content {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(121, 121, 121, 0.4) transparent;
+  }
+  
+  .source-content code {
+    font-family: var(--sl-font-mono);
+    font-size: 0.8rem;
+    line-height: 1.6;
+    white-space: pre;
+    word-break: break-all;
+    overflow-wrap: break-word;
+  }
+  
+  .source-footer {
+    background: var(--sl-color-gray-6);
+    padding: 0.5rem 1rem;
+    border-top: 1px solid var(--sl-color-gray-5);
+    font-size: 0.75rem;
+    color: var(--sl-color-gray-3);
+    display: flex;
+    gap: 1rem;
+    margin-top: 0 !important;
+  }
+  
+  .source-error {
+    padding: 1rem;
+    background: var(--sl-color-red-low);
+    color: var(--sl-color-red-high);
+  }
+</style>
